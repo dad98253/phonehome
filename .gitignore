@@ -144,3 +144,6 @@ po/*.po~
 src/audisp-syslog.c
 src/mail-file.c
 src/sendto.h
+src/ProcessCommExtError.c
+src/windows.c
+
