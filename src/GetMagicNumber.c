@@ -97,8 +97,8 @@ int FAR cdecl WinPrintf(LPSTR fmt,...)
 va_list args;
 char str[250];
 int nTmp;
-unsigned long numout;
-HANDLE hStdout;
+
+
 
 // lpDebugOutputFileName is the optional name for the debug output file.
 // ==NULL (i.e., a NULL pointer) debug output goes to the default debug output device
@@ -150,8 +150,8 @@ va_list args;
 char str[LENTEMPSTR];
 char tmpstr[LENTEMPSTR];
 int nTmp;
-unsigned long numout;
-HANDLE hStderr;
+
+
 
     va_start(args, fmt);
 	if ( !bMyWay ) return -1;
