@@ -76,12 +76,15 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <termios.h>
+#include <fcntl.h>
 #ifdef HAVE_LIBCAP_NG
 #include <cap-ng.h>
 #endif
 #include "libaudit.h"
 #include "common.h"
 #include "auparse.h"
+#include "debug2.h"
 
 
 static volatile int stop = 0;
@@ -93,6 +96,8 @@ static int interpret = 0;
 static char* mykeyval = "MailMe";
 static int debug = 1;
 FILE *fd; // debug File
+FILE *fp9 = NULL;
+
 const char *capngerrors[] = {
         "not initialized",
         "CAPNG_SELECT_BOUNDS and failure to drop a bounding set capability",
@@ -104,12 +109,29 @@ const char *capngerrors[] = {
         "CAPNG_SELECT_AMBIENT and process has capabilities and failed setting an ambient capability",
         "Unable to acquire process capabilities to check if CAP_SETPCAP is set."
     };
+const char * OuputDeviceType[] = {
+        "FILEOUTPUT",
+        "SERIALPORT",
+        "CONSOLE",
+        "TCPPORT",
+        "BITBUCKET",
+        "DEBUGWIN",
+        "RAM"
+};
+
 static void term_handler( int sig );
 static void hup_handler( int sig );
 static void reload_config(void);
 static int init_syslog(int argc, const char *argv[]);
 static inline void write_syslog(char *s);
 extern int sendalert (char * record);
+extern int debug_init();
+extern void debug_close();
+void restore_stdin();
+
+extern int WinFprintf(FILE *hf, const char * fmt,...);
+extern int OpenDebugDevice(FILE **hp);
+extern int iDebugOutputDevice;
 
 
 int main(int argc, const char *argv[])
@@ -119,9 +141,9 @@ int main(int argc, const char *argv[])
 //	struct timeval timeout;
 	struct timespec timeout;
 	int iret = 0;
-
-	if (init_syslog(argc, argv)) return 1;
-
+	int retval = 0;
+	// initialize the system log routine
+	if (init_syslog(argc, argv)) return EXIT_FAILURE;
 	if(debug) {
 	    // Open debug file for writing, create if it doesn't exist, and truncate if it does
 	    fd = fopen("/tmp/phdebug.txt", "w");
@@ -130,58 +152,66 @@ int main(int argc, const char *argv[])
 	        return 1;
 	    }
 	    fprintf(fd,"phonehome started\n");
+		debug_init();
+		if ( OpenDebugDevice((FILE**)&fp9) == 0 ) {
+			fprintf(fd,"OpenDebugDevice failed\n");
+		} else {
+			WinFprintf(fp9,"\33[1;32mDebug output device set to type %i\33[0m (%s)\n", iDebugOutputDevice,OuputDeviceType[iDebugOutputDevice]);
+		}
+	    WinFprintf(fp9,"phonehome started\n");
 	}
-
-	 // Block SIGHUP and SIGTERM initially
-	    sigset_t block_mask, old_mask;
-	    iret = sigemptyset(&block_mask);
+    // Make sure stdin is in blocking, canonical mode
+    restore_stdin();
+	// Block SIGHUP and SIGTERM initially
+	sigset_t block_mask, old_mask;
+	iret = sigemptyset(&block_mask);
+	if(debug) {
+		if (iret) WinFprintf(fp9, "sigemptyset failed for block_mask with %s\n",strerror(errno));
+	}
+	iret = sigaddset(&block_mask, SIGHUP);
+	if(debug) {
+		if (iret) WinFprintf(fp9, "sigaddset failed for SIGHUP with %s\n",strerror(errno));
+	}
+	iret = sigaddset(&block_mask, SIGTERM);
+	if(debug) {
+		if (iret) WinFprintf(fp9, "sigaddset failed for SIGTERM with %s\n",strerror(errno));
+	}
+	if (( iret = sigprocmask(SIG_BLOCK, &block_mask, &old_mask) ) == -1) {
 		if(debug) {
-			if (iret) fprintf(fd, "sigemptyset failed for block_mask with %s\n",strerror(errno));
+			WinFprintf(fp9, "sigprocmask failed with %s\n",strerror(errno));
 		}
-		iret = sigaddset(&block_mask, SIGHUP);
-		if(debug) {
-			if (iret) fprintf(fd, "sigaddset failed for SIGHUP with %s\n",strerror(errno));
-		}
-		iret = sigaddset(&block_mask, SIGTERM);
-		if(debug) {
-			if (iret) fprintf(fd, "sigaddset failed for SIGTERM with %s\n",strerror(errno));
-		}
-	    if (( iret = sigprocmask(SIG_BLOCK, &block_mask, &old_mask) ) == -1) {
-			if(debug) {
-				fprintf(fd, "sigprocmask failed with %s\n",strerror(errno));
-			}
-	        exit(EXIT_FAILURE);
-	    }
+		exit(EXIT_FAILURE);
+	}
 
 	/* Register sighandlers */
 	sa.sa_flags = 0;
 	iret = sigemptyset(&sa.sa_mask);
 	if(debug) {
-		if (iret) fprintf(fd, "sigemptyset failed for sa.sa_mask with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset failed for sa.sa_mask with %s\n",strerror(errno));
 	}
 	/* Set handler for the ones we care about */
 	sa.sa_handler = term_handler;
 	iret = sigaction(SIGTERM, &sa, NULL);
 	if(debug) {
-		if (iret) fprintf(fd, "sigemptyset for SIGTERM failed with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset for SIGTERM failed with %s\n",strerror(errno));
 	}
 	sa.sa_handler = hup_handler;
 	iret = sigaction(SIGHUP, &sa, NULL);
 	if(debug) {
-		if (iret) fprintf(fd, "sigemptyset for SIGHUP failed with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset for SIGHUP failed with %s\n",strerror(errno));
 	}
 #ifdef HAVE_LIBCAP_NG
 	// Drop capabilities
-	capng_clear(CAPNG_SELECT_BOTH);
-    iret = capng_apply(CAPNG_SELECT_BOTH);
-    if(debug) {
-    	if (iret) fprintf(fd, "capng_apply failed with %s\n",capngerrors[1-iret]);
-    }
+//	capng_clear(CAPNG_SELECT_BOTH);
+//    iret = capng_apply(CAPNG_SELECT_BOTH);
+//    if(debug) {
+//    	if (iret) WinFprintf(fp9, "capng_apply failed with %s\n",capngerrors[1-iret]);
+//    }
 #endif
 
 	do {
 		fd_set read_mask;
-		int retval = -1;
+		retval = -1;
 
 		/* Load configuration */
 		if (hup) {
@@ -197,50 +227,56 @@ int main(int argc, const char *argv[])
             sigset_t pselect_mask;
             iret = sigemptyset(&pselect_mask); // Empty mask means no signals are blocked during pselect
     		if(debug) {
-    			if (iret) fprintf(fd, "sigemptyset failed for pselect_mask with %s\n",strerror(errno));
+    			if (iret) WinFprintf(fp9, "sigemptyset failed for pselect_mask with %s\n",strerror(errno));
+    			WinFprintf(fp9, "calling pselect...\n");
     		}
             // Waiting for data on pipe or child exit...
 			//retval= select(1, &read_mask, NULL, NULL, &timeout);
     		retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
 		} while (retval == -1 && errno == EINTR && !hup && !stop);
-
+		if (retval == 0) {
+	    	if(debug) {
+	    		WinFprintf(fp9, "Timeout occurred.\n");
+	    	}
+//		    continue;
+		}
 		/* Now the event loop */
 		 if (!stop && !hup && retval > 0) {
 	    	if(debug) {
-	    		fprintf(fd, "process an event\n");
+	    		WinFprintf(fp9, "process an event\n");
 	    	}
 			if (FD_ISSET(0, &read_mask)) {
 		    	if(debug) {
-		    		fprintf(fd, "FD_ISSET checks\n");
+		    		WinFprintf(fp9, "FD_ISSET checks\n");
 		    	}
 				do {
-					if (audit_fgets(tmp,
-					    MAX_AUDIT_MESSAGE_LENGTH, 0) > 0)
-						write_syslog(tmp);
+					if (audit_fgets(tmp, MAX_AUDIT_MESSAGE_LENGTH, 0) > 0) write_syslog(tmp);
 				} while (audit_fgets_more(
 						MAX_AUDIT_MESSAGE_LENGTH));
 			}
 		}
 		if (audit_fgets_eof()) {
 	    	if(debug) {
-	    		fprintf(fd, "eof detected\n");
+	    		WinFprintf(fp9, "eof detected\n");
 	    	}
 			break;
 		}
 	} while (stop == 0);
 	if(debug) {
-		fprintf(fd, "stop detected... exiting\n");
+		WinFprintf(fp9, "stop detected... exiting\n");
 	}
 	// Restore original signal mask
 	if (sigprocmask(SIG_SETMASK, &old_mask, NULL) == -1) {
 		if(debug) {
-			fprintf(fd, "sigprocmask restore failed with %s\n",strerror(errno));
+			WinFprintf(fp9, "sigprocmask restore failed with %s\n",strerror(errno));
 		}
 	    exit(EXIT_FAILURE);
 	}
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
 	free(record);
+	debug_close();
+	fclose(fd);
 	return 0;
 }
 
@@ -267,7 +303,7 @@ static void hup_handler( int sig )
 static void reload_config(void)
 {
     if(debug) {
-    	fprintf(fd, "reloading config file\n");
+    	WinFprintf(fp9, "reloading config file\n");
     }
 	hup = 0;
 	sendmail = 0;
@@ -346,7 +382,7 @@ static inline void write_syslog(char *s)
 		int rc, header = 0;
 		char *mptr, tbuf[64];
     	if(debug) {
-    		fprintf(fd, "read and parse the record\n");
+    		WinFprintf(fp9, "read and parse the record\n");
     	}
 		// Setup record buffer
 		if (record == NULL)
@@ -429,3 +465,29 @@ static inline void write_syslog(char *s)
 		syslog(priority, "%s", s);
 	}
 }
+
+void restore_stdin() {
+	int iret;
+    // Restore default terminal attributes
+/*    struct termios oldt;
+    iret = tcgetattr(STDIN_FILENO, &oldt);
+    if(debug) {
+    	if (iret) WinFprintf(fp9, "tcgetattr failed for STDIN_FILENO with %s\n",strerror(errno));
+    }
+    oldt.c_lflag |= (ICANON | ECHO);
+    iret = tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    if(debug) {
+    	if (iret) WinFprintf(fp9, "tcsetattr failed for STDIN_FILENO with %s\n",strerror(errno));
+    } */
+    // Set file descriptor back to blocking
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if(debug) {
+    	if (flags == -1) WinFprintf(fp9, "fcntl failed for F_GETFL with %s\n",strerror(errno));
+    }
+    iret = fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
+    if(debug) {
+    	if (iret == -1) WinFprintf(fp9, "fcntl failed for F_SETFL with %s\n",strerror(errno));
+    }
+}
+
+
