@@ -141,4 +141,6 @@ po/Makefile.in.in
 po/Makevars.template
 po/remove-potcdate.sed
 po/*.po~
-
+src/audisp-syslog.c
+src/mail-file.c
+src/sendto.h
