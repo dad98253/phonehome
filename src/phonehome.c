@@ -73,6 +73,9 @@
 #include <errno.h>
 #include <syslog.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 #ifdef HAVE_LIBCAP_NG
 #include <cap-ng.h>
 #endif
@@ -88,6 +91,19 @@ static int sendmail = 0;
 static int priority;
 static int interpret = 0;
 static char* mykeyval = "MailMe";
+static int debug = 1;
+FILE *fd; // debug File
+const char *capngerrors[] = {
+        "not initialized",
+        "CAPNG_SELECT_BOUNDS and failure to drop a bounding set capability",
+        "CAPNG_SELECT_BOUNDS and failure to re-read bounding set",
+        "CAPNG_SELECT_BOUNDS and process does not have CAP_SETPCAP",
+        "CAPNG_SELECT_CAPS and failure in capset syscall",
+        "CAPNG_SELECT_AMBIENT and process has no capabilities and failed clearing ambient capabilities",
+        "CAPNG_SELECT_AMBIENT and process has capabilities and failed clearing ambient capabilities",
+        "CAPNG_SELECT_AMBIENT and process has capabilities and failed setting an ambient capability",
+        "Unable to acquire process capabilities to check if CAP_SETPCAP is set."
+    };
 static void term_handler( int sig );
 static void hup_handler( int sig );
 static void reload_config(void);
@@ -100,24 +116,67 @@ int main(int argc, const char *argv[])
 {
 	char tmp[MAX_AUDIT_MESSAGE_LENGTH+1];
 	struct sigaction sa;
-	struct timeval timeout;
+//	struct timeval timeout;
+	struct timespec timeout;
+	int iret = 0;
 
-	if (init_syslog(argc, argv))
-		return 1;
+	if (init_syslog(argc, argv)) return 1;
+
+	if(debug) {
+	    // Open debug file for writing, create if it doesn't exist, and truncate if it does
+	    fd = fopen("/tmp/phdebug.txt", "w");
+	    if (fd == NULL) {
+	    	syslog(LOG_DEBUG, "debug file open failed");
+	        return 1;
+	    }
+	    fprintf(fd,"phonehome started\n");
+	}
+
+	 // Block SIGHUP and SIGTERM initially
+	    sigset_t block_mask, old_mask;
+	    iret = sigemptyset(&block_mask);
+		if(debug) {
+			if (iret) fprintf(fd, "sigemptyset failed for block_mask with %s\n",strerror(errno));
+		}
+		iret = sigaddset(&block_mask, SIGHUP);
+		if(debug) {
+			if (iret) fprintf(fd, "sigaddset failed for SIGHUP with %s\n",strerror(errno));
+		}
+		iret = sigaddset(&block_mask, SIGTERM);
+		if(debug) {
+			if (iret) fprintf(fd, "sigaddset failed for SIGTERM with %s\n",strerror(errno));
+		}
+	    if (( iret = sigprocmask(SIG_BLOCK, &block_mask, &old_mask) ) == -1) {
+			if(debug) {
+				fprintf(fd, "sigprocmask failed with %s\n",strerror(errno));
+			}
+	        exit(EXIT_FAILURE);
+	    }
 
 	/* Register sighandlers */
 	sa.sa_flags = 0;
-	sigemptyset(&sa.sa_mask);
+	iret = sigemptyset(&sa.sa_mask);
+	if(debug) {
+		if (iret) fprintf(fd, "sigemptyset failed for sa.sa_mask with %s\n",strerror(errno));
+	}
 	/* Set handler for the ones we care about */
 	sa.sa_handler = term_handler;
-	sigaction(SIGTERM, &sa, NULL);
+	iret = sigaction(SIGTERM, &sa, NULL);
+	if(debug) {
+		if (iret) fprintf(fd, "sigemptyset for SIGTERM failed with %s\n",strerror(errno));
+	}
 	sa.sa_handler = hup_handler;
-	sigaction(SIGHUP, &sa, NULL);
-
+	iret = sigaction(SIGHUP, &sa, NULL);
+	if(debug) {
+		if (iret) fprintf(fd, "sigemptyset for SIGHUP failed with %s\n",strerror(errno));
+	}
 #ifdef HAVE_LIBCAP_NG
 	// Drop capabilities
 	capng_clear(CAPNG_SELECT_BOTH);
-        capng_apply(CAPNG_SELECT_BOTH);
+    iret = capng_apply(CAPNG_SELECT_BOTH);
+    if(debug) {
+    	if (iret) fprintf(fd, "capng_apply failed with %s\n",capngerrors[1-iret]);
+    }
 #endif
 
 	do {
@@ -132,13 +191,28 @@ int main(int argc, const char *argv[])
 			FD_ZERO(&read_mask);
 			FD_SET(0, &read_mask);
 			timeout.tv_sec = 5;  // set the time out Seconds
-			timeout.tv_usec = 0; // Microseconds
-			retval= select(1, &read_mask, NULL, NULL, &timeout);
+			timeout.tv_nsec = 0; // Nanoseconds
+//			timeout.tv_usec = 0; // Microseconds
+            // Prepare sigmask for pselect: temporarily unblock SIGTERM and SIGHUP
+            sigset_t pselect_mask;
+            iret = sigemptyset(&pselect_mask); // Empty mask means no signals are blocked during pselect
+    		if(debug) {
+    			if (iret) fprintf(fd, "sigemptyset failed for pselect_mask with %s\n",strerror(errno));
+    		}
+            // Waiting for data on pipe or child exit...
+			//retval= select(1, &read_mask, NULL, NULL, &timeout);
+    		retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
 		} while (retval == -1 && errno == EINTR && !hup && !stop);
 
 		/* Now the event loop */
 		 if (!stop && !hup && retval > 0) {
+	    	if(debug) {
+	    		fprintf(fd, "process an event\n");
+	    	}
 			if (FD_ISSET(0, &read_mask)) {
+		    	if(debug) {
+		    		fprintf(fd, "FD_ISSET checks\n");
+		    	}
 				do {
 					if (audit_fgets(tmp,
 					    MAX_AUDIT_MESSAGE_LENGTH, 0) > 0)
@@ -147,9 +221,23 @@ int main(int argc, const char *argv[])
 						MAX_AUDIT_MESSAGE_LENGTH));
 			}
 		}
-		if (audit_fgets_eof()) break;
+		if (audit_fgets_eof()) {
+	    	if(debug) {
+	    		fprintf(fd, "eof detected\n");
+	    	}
+			break;
+		}
 	} while (stop == 0);
-
+	if(debug) {
+		fprintf(fd, "stop detected... exiting\n");
+	}
+	// Restore original signal mask
+	if (sigprocmask(SIG_SETMASK, &old_mask, NULL) == -1) {
+		if(debug) {
+			fprintf(fd, "sigprocmask restore failed with %s\n",strerror(errno));
+		}
+	    exit(EXIT_FAILURE);
+	}
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
 	free(record);
@@ -178,6 +266,9 @@ static void hup_handler( int sig )
 
 static void reload_config(void)
 {
+    if(debug) {
+    	fprintf(fd, "reloading config file\n");
+    }
 	hup = 0;
 	sendmail = 0;
 }
@@ -254,7 +345,9 @@ static inline void write_syslog(char *s)
 	if (interpret) {
 		int rc, header = 0;
 		char *mptr, tbuf[64];
-
+    	if(debug) {
+    		fprintf(fd, "read and parse the record\n");
+    	}
 		// Setup record buffer
 		if (record == NULL)
 			record = malloc(MAX_AUDIT_MESSAGE_LENGTH);
