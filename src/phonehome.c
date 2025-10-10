@@ -1,7 +1,33 @@
-/* audisp-syslog.c --
+/*
+ ============================================================================
+ Name        : phonehome.c
+ Author      : dad
+ Version     :
+ Copyright   : 2025
+ Description : Auditd plugin to send an email warning without using a command
+               script. This permits the simultanious use of email alerts and
+               root command audit logging. (If you use a script to send email
+               alerts and also audit log root commands, you will generate an
+               infinite loop of audit messages and the kernel will be very
+               unhappy - don't ask me how I know)
+ ============================================================================
+ */
+/* based on audisp-syslog.c by Steve Grubb --
+ * and the mail-file libESMTP example application by Brian Stafford
+ * additional modifications were made by John Kuras
+ *
+ * Steve's original code is:
  * Copyright 2018 Red Hat Inc., Durham, North Carolina.
  * All Rights Reserved.
  *
+ * Brian's original code is:
+ * Copyright (C) 2001,2002,2021  Brian Stafford <https://libesmtp.github.io/>
+ *
+ * All modification or enhancements made by John Kuras are:
+ * Copyright (c) John kuras 2025
+ * All Rights Reserved.
+ *
+ * License for Steve's work states:
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -16,11 +42,29 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
+ * License for Bian's work states:
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published
+ *  by the Free Software Foundation; either version 2 of the License,
+ *  or (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * License for all modifications made by John Kuras is:
+ * DWTFYWWI (Do whatever you want with it)
+ *
  * Authors:
  *   Steve Grubb <sgrubb@redhat.com>
+ *   Brian Stafford <https://libesmtp.github.io/>
+ *   John Kuras <w7og@yahoo.com>
  *
  */
-
 #include "config.h"
 #include <stdio.h>
 #include <signal.h>
@@ -36,11 +80,83 @@
 #include "common.h"
 #include "auparse.h"
 
-/* Global Data */
+
 static volatile int stop = 0;
 static volatile int hup = 0;
+static char *record = NULL;
+static int sendmail = 0;
 static int priority;
 static int interpret = 0;
+static char* mykeyval = "MailMe";
+static void term_handler( int sig );
+static void hup_handler( int sig );
+static void reload_config(void);
+static int init_syslog(int argc, const char *argv[]);
+static inline void write_syslog(char *s);
+extern int sendalert (char * record);
+
+
+int main(int argc, const char *argv[])
+{
+	char tmp[MAX_AUDIT_MESSAGE_LENGTH+1];
+	struct sigaction sa;
+	struct timeval timeout;
+
+	if (init_syslog(argc, argv))
+		return 1;
+
+	/* Register sighandlers */
+	sa.sa_flags = 0;
+	sigemptyset(&sa.sa_mask);
+	/* Set handler for the ones we care about */
+	sa.sa_handler = term_handler;
+	sigaction(SIGTERM, &sa, NULL);
+	sa.sa_handler = hup_handler;
+	sigaction(SIGHUP, &sa, NULL);
+
+#ifdef HAVE_LIBCAP_NG
+	// Drop capabilities
+	capng_clear(CAPNG_SELECT_BOTH);
+        capng_apply(CAPNG_SELECT_BOTH);
+#endif
+
+	do {
+		fd_set read_mask;
+		int retval = -1;
+
+		/* Load configuration */
+		if (hup) {
+			reload_config();
+		}
+		do {
+			FD_ZERO(&read_mask);
+			FD_SET(0, &read_mask);
+			timeout.tv_sec = 5;  // set the time out Seconds
+			timeout.tv_usec = 0; // Microseconds
+			retval= select(1, &read_mask, NULL, NULL, &timeout);
+		} while (retval == -1 && errno == EINTR && !hup && !stop);
+
+		/* Now the event loop */
+		 if (!stop && !hup && retval > 0) {
+			if (FD_ISSET(0, &read_mask)) {
+				do {
+					if (audit_fgets(tmp,
+					    MAX_AUDIT_MESSAGE_LENGTH, 0) > 0)
+						write_syslog(tmp);
+				} while (audit_fgets_more(
+						MAX_AUDIT_MESSAGE_LENGTH));
+			}
+		}
+		if (audit_fgets_eof()) break;
+	} while (stop == 0);
+
+	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
+	syslog(LOG_INFO, "phonehome stoped");
+	free(record);
+	return 0;
+}
+
+
 
 /*
  * SIGTERM handler
@@ -48,6 +164,7 @@ static int interpret = 0;
 static void term_handler( int sig )
 {
         stop = 1;
+//        syslog(LOG_INFO, "stopping phonehome");
 }
 
 /*
@@ -56,11 +173,13 @@ static void term_handler( int sig )
 static void hup_handler( int sig )
 {
         hup = 1;
+        syslog(LOG_INFO, "re-configuring phonehome");
 }
 
 static void reload_config(void)
 {
 	hup = 0;
+	sendmail = 0;
 }
 
 static int init_syslog(int argc, const char *argv[])
@@ -123,14 +242,13 @@ static int init_syslog(int argc, const char *argv[])
 		}
 	}
 	syslog(LOG_INFO,
-		"syslog plugin initialized with facility %d and priority %d",
+		"phonehome plugin initialized with facility %d and priority %d",
 		facility, priority);
 	if (facility != LOG_USER)
 		openlog("audispd", 0, facility);
 	return 0;
 }
 
-static char *record = NULL;
 static inline void write_syslog(char *s)
 {
 	if (interpret) {
@@ -161,7 +279,13 @@ static inline void write_syslog(char *s)
 			int ftype = auparse_get_field_type(au);
 			const char *fname = auparse_get_field_name(au);
 			const char *fval;
+			//syslog(priority, "ftype,fname,fval = %i,\"%s\",\"%s\"", ftype, fname, fval);
 			switch (ftype) {
+				case AUPARSE_TYPE_ESCAPED_KEY:
+					fval = auparse_interpret_field(au);
+					//syslog(priority, "type %i found fval = %s", AUPARSE_TYPE_ESCAPED_KEY, fval);
+					if ( strcmp(fval,mykeyval) == 0 ) sendmail = 1;
+					break;
 				case AUPARSE_TYPE_ESCAPED_FILE:
 					fval = auparse_interpret_realpath(au);
 					break;
@@ -198,7 +322,12 @@ static inline void write_syslog(char *s)
 			}
 		}
 		// Record is complete, dump it to syslog
-		syslog(priority, "%s", record);
+		// syslog(priority, "%s", record);
+		if (sendmail) {
+			sendalert(record);
+			syslog(priority, "warning email sent for msg = \"%s\"", record);
+		}
+		sendmail = 0;
 		auparse_destroy(au);
 	} else {
 		char *c = strchr(s, AUDIT_INTERP_SEPARATOR);
@@ -207,60 +336,3 @@ static inline void write_syslog(char *s)
 		syslog(priority, "%s", s);
 	}
 }
-
-int main(int argc, const char *argv[])
-{
-	char tmp[MAX_AUDIT_MESSAGE_LENGTH+1];
-	struct sigaction sa;
-
-	if (init_syslog(argc, argv))
-		return 1;
-
-	/* Register sighandlers */
-	sa.sa_flags = 0;
-	sigemptyset(&sa.sa_mask);
-	/* Set handler for the ones we care about */
-	sa.sa_handler = term_handler;
-	sigaction(SIGTERM, &sa, NULL);
-	sa.sa_handler = hup_handler;
-	sigaction(SIGHUP, &sa, NULL);
-
-#ifdef HAVE_LIBCAP_NG
-	// Drop capabilities
-	capng_clear(CAPNG_SELECT_BOTH);
-        capng_apply(CAPNG_SELECT_BOTH);
-#endif
-
-	do {
-		fd_set read_mask;
-		int retval = -1;
-
-		/* Load configuration */
-		if (hup) {
-			reload_config();
-		}
-		do {
-			FD_ZERO(&read_mask);
-			FD_SET(0, &read_mask);
-			retval= select(1, &read_mask, NULL, NULL, NULL);
-		} while (retval == -1 && errno == EINTR && !hup && !stop);
-
-		/* Now the event loop */
-		 if (!stop && !hup && retval > 0) {
-			if (FD_ISSET(0, &read_mask)) {
-				do {
-					if (audit_fgets(tmp,
-					    MAX_AUDIT_MESSAGE_LENGTH, 0) > 0)
-						write_syslog(tmp);
-				} while (audit_fgets_more(
-						MAX_AUDIT_MESSAGE_LENGTH));
-			}
-		}
-		if (audit_fgets_eof())
-			break;
-	} while (stop == 0);
-
-	free(record);
-	return 0;
-}
-
