@@ -255,7 +255,7 @@ int main(int argc, const char *argv[])
 						MAX_AUDIT_MESSAGE_LENGTH));
 			}
 		}
-		if ( retval < 0 ) {
+		if ( retval < 0 && errno != EINTR) {
 			syslog(LOG_ERR, "select failed with %s", strerror(errno));
 			break;
 		}
