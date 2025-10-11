@@ -147,6 +147,10 @@ int main(int argc, const char *argv[])
 						MAX_AUDIT_MESSAGE_LENGTH));
 			}
 		}
+		if ( retval < 0 ) {
+			syslog(LOG_ERR, "select failed with %s", strerror(errno));
+			break;
+		}
 		if (audit_fgets_eof()) break;
 	} while (stop == 0);
 
@@ -254,6 +258,7 @@ static inline void write_syslog(char *s)
 	if (interpret) {
 		int rc, header = 0;
 		char *mptr, tbuf[64];
+		int saved_stdin;
 
 		// Setup record buffer
 		if (record == NULL)
@@ -324,7 +329,17 @@ static inline void write_syslog(char *s)
 		// Record is complete, dump it to syslog
 		// syslog(priority, "%s", record);
 		if (sendmail) {
+			// somewhere deep in the bowls of the estmp library they close stdin and
+			// thus destroy its file descriptor. This will cause our select call in
+			// the mainprogfram to fail. The following is a kludge to get around this.
+			saved_stdin = dup(STDIN_FILENO);
+			// send the email alert
 			sendalert(record);
+			// restore the stdin descriptor
+			dup2(saved_stdin, STDIN_FILENO);
+			close(saved_stdin);
+			// Now stdin should be restored
+			// for kicks, we'll put a copy of the message in syslog as well:
 			syslog(priority, "warning email sent for msg = \"%s\"", record);
 		}
 		sendmail = 0;
