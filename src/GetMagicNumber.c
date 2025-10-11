@@ -1,50 +1,30 @@
 
 #include "config.h"
 
-
-//#define TRUE true
-//#define FALSE false
 #include "lindows.h"
 #define dfprintf if (debugflag) WinFprintf
-//#define dfprintf if (0) ((int (*)(const char *, ...)) 0)
 
-
-
-//#include "StdAfx.h"
 #include <stdio.h>
 #ifdef WINDOZE
 #include <windows.h>
 #include <cderr.h>
 #endif
-//#include <winnt.h>
+
 #ifndef PROCESSOR_ARCHITECTURE_AMD64
 #define PROCESSOR_ARCHITECTURE_AMD64 9
 #endif
 
-//#include <winver.h>
-//#include <Powerbase.h>
-//#include <PowrProf.h>
 #include <assert.h>
 #include <string.h>
-//#include "passwin.h"
-//#include "globals.h"
-//#include "options.h"
-//#include "debugflags.h"
-//#include "resource.h"
 
 #include "debug2.h"
 
-//#define PRINTFDEBUG
-
-//void WinVersionInfo();
-//CHAR * getLastErrorText(CHAR *pBuf, ULONG bufSize, DWORD dwMessageId);
 #ifdef DEBUG
 extern int OpenTCPport(void);
 extern int SetUpDebugConsole(void);
 extern int IPSend(char * data, int MaxDataSize);
 extern int ClosePort(void);
 extern short BWError(HWND hwnd, WORD bFlags, WORD quit, WORD id, ...);
-//extern VOID StandardError(WORD id);
 extern int ReAllocateCharVector(unsigned char **p, int length);
 extern void	DumpRamFile(FILE *hp,char **lpHeapFile);
 void Replace_ws_With_s(const char * fmt, char * tempstr);
@@ -98,27 +78,6 @@ va_list args;
 char str[250];
 int nTmp;
 
-
-
-// lpDebugOutputFileName is the optional name for the debug output file.
-// ==NULL (i.e., a NULL pointer) debug output goes to the default debug output device
-// COMx => debug output is to go to a serial port x
-// CON  => debug output is to go to a console screen
-// PORTx => debug output is to go to TCP port x as a service (requires appropriate firewall permission)
-///////////    NOTE :  all refernces here to "TCP" should be changed to "UDP"... I was just to laxy to change all of the comments when I changed the code to UDP - sorry
-// NULL => debug output goes to the bit bucket
-// DEBUG => debug output goes to the debug window
-// <anything else> => is assumed to ba a file name
-//extern char * lpDebugOutputFileName;
-// iDebugOutputDevice is set by passwin to indicate the type of device tosend debug output to
-// 0 => a normal output file (default)
-// 1 => a serial port
-// 2 => a console screen
-// 3 => a TCPIP port
-// 4 => the bit bucket
-// 5 => the debug window
-//extern int iDebugOutputDevice;
-
     va_start(args, fmt);
 	if ( !bMyWay ) return -1;
     nTmp=vsprintf(str,fmt,args);
@@ -151,8 +110,6 @@ char str[LENTEMPSTR];
 char tmpstr[LENTEMPSTR];
 int nTmp;
 
-
-
     va_start(args, fmt);
 	if ( !bMyWay ) return -1;
 #ifdef WINDOZE
@@ -175,7 +132,6 @@ int nTmp;
 #endif
 		break;
 
-
 	  case RAM:
 		SaveStringInHeap(&lpHeapFile,str);
 #ifdef PRINTFDEBUG
@@ -193,9 +149,7 @@ int Dbgprintf(int linenum, const char * modulename, unsigned int debugflag, cons
 {
 va_list args;
 
-int nTmp,jkTmp;
-unsigned long numout;
-HANDLE hStderr;
+	int nTmp;
 
     va_start(args, fmt);
 
@@ -238,10 +192,8 @@ HANDLE hStderr;
 
 int OpenDebugDevice(FILE **hp)
 {
-    DCB dcb;
-    bool fSuccess;
+
 #define LENTEMPLINE	250
-	char *line = NULL;
 
 	SaveStringInHeap(&lpHeapFile,(char*)"$e$n$d$o$f$f$i$l$e$");
 
@@ -286,49 +238,7 @@ int CloseDebugDevice(FILE *hp)
 	}
 	return 1;
 }
-/*
-void printError( TCHAR* msg );
 
-void printError( TCHAR* msg )
-{
-  DWORD eNum;
-  TCHAR sysMsg[256];
-  TCHAR* p;
-
-  eNum = GetLastError( );
-  FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM | 
-         FORMAT_MESSAGE_IGNORE_INSERTS,
-         NULL, eNum,
-         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-         sysMsg, 256, NULL );
-
-  // Trim the end of the line and terminate it with a null
-  p = sysMsg;
-  while( ( *p > 31 ) || ( *p == 9 ) )
-    ++p;
-  do { *p-- = 0; } while( ( p >= sysMsg ) &&
-                          ( ( *p == '.' ) || ( *p < 33 ) ) );
-
-  // Display the message
-  _tprintf( TEXT("\n\t%s failed with error %lu (%s)"), msg, eNum, sysMsg );
-}
-*/
-/*
-VOID wexit(int status)
-{
-    (void)BWError ( hWnd, MB_APPLMODAL | MB_OK | MB_ICONEXCLAMATION
-	  , 1 , IDS_ABORT, status );
-    return;
-}
-
-void ProcessLastError(WORD id)
-{
-    (void)BWError ( hWnd, MB_APPLMODAL | MB_OK | MB_ICONEXCLAMATION
-          , 0 , id , GetLastError() );
-    return;
-
-}
-*/
 bool SaveStringInHeap(char **lpHeapFile,char *str)
 {
 	int istart;

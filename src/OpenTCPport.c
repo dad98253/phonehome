@@ -30,13 +30,11 @@
 //		See included LICENSE file for lisensing information.
 //
 
-//#undef __cplusplus
 
 #ifdef WINDOZE
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #else
-//#include "StdAfx.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -50,15 +48,11 @@
 #include <stdio.h>
 #include <string.h>
 
-//#include "options.h"
-
 #define DEFAULT_PORT 5001
 #ifdef WINDOZE
 #define DEFAULT_PROTO SOCK_DGRAM // UDP
 #else
 #define DEFAULT_PROTO 2
-//#define DEFAULT_PROTO SOCK_DGRAM // UDP
-//#define INVALID_SOCKET	-1
 #define SOCKET_ERROR	-1
 #endif
 int OpenTCPport(void);
@@ -78,10 +72,6 @@ unsigned int addr;
 char *server_name;
 unsigned short port = DEFAULT_PORT;
 int socket_type = DEFAULT_PROTO;
-//int socket_type = SOCK_DGRAM;
-//int socket_type = SOCK_STREAM;
-//int socket_type = DEFAULT_PROTO;
-
 
 char * lpDebugServerName = NULL;
 int iDebugServerPort = 0;
@@ -103,9 +93,6 @@ int OpenTCPport(void) {
 		return 0;
 	}
 #endif
-	//
-	// Attempt to detect if we should call gethostbyname() or
-	// gethostbyaddr()
 	if (isalpha(server_name[0])) {   /* server address is a name */
 		hp = gethostbyname(server_name);
 	}
@@ -119,8 +106,6 @@ int OpenTCPport(void) {
 		fprintf(stderr,"Client: Cannot resolve address [%s] to hostname: Error %d\n",
 			server_name,WSAGetLastError());
 #endif	// DEBUGOPENTCPPORT
-//		WSACleanup();	///////// test to see if this sould be removed...
-//		return 0;		///////// test to see if this sould be removed...
 #else	// WINDOZE
 #ifdef DEBUGOPENTCPPORT
 		int errsv = errno;
@@ -222,27 +207,3 @@ int ClosePort(void) {
 	return 1;
 }
 
-/*
- * I did some work like this, through much reading of MSDN and the sockets documentation I got a list of differences between Winsocks and POSIX sockets, many are minor, sign differences or type differences.
-
-
-uses closesocket() to close a socket, instead of close().
-uses an int for the third parameter in bind().
-uses an int* for the third parameter in accept().
-defines a SOCKET as unsigned int.
-socket() returns INVALID_SOCKET(unsigned int) on error, *nix returns -1.
-connect() returns SOCKET_ERROR(int) on error, *nix returns -1.
-bind() returns SOCKET_ERROR(int) on error, *nix returns -1.
-listen() returns SOCKET_ERROR(int) on error, *nix returns -1.
-accept() returns INVALID_SOCKET(unsigned int) on error, *nix returns -1.
-select() returns SOCKET_ERROR(int) on error, *nix returns -1.
-send() returns SOCKET_ERROR(int) on error, *nix returns -1.
-send() uses an int for the third parameter (length).
-recv() returns SOCKET_ERROR(int) on error, *nix returns -1.
-setsockopt() returns SOCKET_ERROR(int) on error, *nix returns -1.
-uses an const char* for the fourth parameter in setsockopt().
-ioctlsocket() instead of fcntl(), this returns SOCK_ERROR(int), *nix returns -1.
-ioctlsocket() has the option as a u_long, fcntl() uses an int.
-
-Not mentioned, select() on Linux modifies the timeout value to reflect time not slept.
- */

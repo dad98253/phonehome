@@ -1,9 +1,6 @@
 
 #include "config.h"
 
-
-
-//#include "StdAfx.h"
 #include <malloc.h>
 
 extern char * strjk;

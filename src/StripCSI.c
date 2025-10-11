@@ -1,9 +1,7 @@
-#ifdef HAVE_CONFIG_H
+
 #include "config.h"
-#endif  // HAVE_CONFIG_H
 
 #ifndef WINDOZE
-//#include "StdAfx.h"
 #include "lindows.h"
 #endif
 #include <stdio.h>
@@ -56,17 +54,14 @@ bool StripCSI(char *ci, char *co)
 			if (c[0] == '\233' ) {
 				state = SINGLECHAR;
 				OutState = NOOUTPUT;
-//				printf("<single char CSI>");
 			}
 			if (c[0] == ESC) {
 				if ( c[1] == '[' ) {
 					state = MULTICHAR1;
 					OutState = NOOUTPUT;
-//					printf("<multi char CSI>");
 				} else if ( RANGE1(c[1]) ) {
 					state = TWOCHAR;
 					OutState = NOOUTPUT;
-//					printf("<two char CSI>n");
 				}
 			} 
 			break;
@@ -82,7 +77,6 @@ bool StripCSI(char *ci, char *co)
 		case MULTICHAR2:
 			if ( RANGE2(c[0]) ) {
 				state = INITIAL;
-//				printf("</multi char CSI>");
 			}
 			break;
 
@@ -93,7 +87,6 @@ bool StripCSI(char *ci, char *co)
 		case OUTPUT:
 			*co = c[0];
 			co++;
-//			printf("%c", c[0] );
 			break;
 		case NOOUTPUT:
 			break;
@@ -106,11 +99,9 @@ bool StripCSI(char *ci, char *co)
 	if (state == INITIAL) {
 		*co = c[0];
 		co++;
-//		printf("%c", c[0] );
 	}
 
 	*co = '\000';
-//	printf("\n");
 
 	return (false);
 }

@@ -1,8 +1,6 @@
 
 #include "config.h"
 
-
-//#include "StdAfx.h"
 #include <string.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -37,15 +35,9 @@ int storestring(char **p, char * string, int length)
 
 int AllocatePointerVector(void **p, size_t size, int length)
 {
-//	int i;
-
-//	*p = (void*)malloc((length+1)*size);
 	*p = (void*)calloc((length+1), size);
 	
 	if (*p != NULL) {
-//		for (i=0;i<length;i++){
-//			*(p+i) = NULL;
-//		}
 		return (0);
 	}
 	return (1);
@@ -54,36 +46,20 @@ int AllocatePointerVector(void **p, size_t size, int length)
 
 int ReAllocatePointerVector(void **p, size_t size, int length)
 {
-//	int i;
-//	void *xx;
-//	int izize;
 
 	if ( *p != NULL ) {
 		int isize;
 		isize = _msize( *p );
-//		printf( "Size of block: %u\n", isize );
 		if ( length == 0 ) return (isize);
    /* Reallocate and show new size: */
 		if( (*p = realloc( *p, isize + ((length+1) * size) )) ==  NULL ) return (0);
-//		izize = isize / size;
 		isize = _msize( *p );
-/*		for (i=0;i<=length;i++){
-			*(p+izize+i) = NULL;
-			xx = p+izize+i;
-			fprintf(stdout, "i = %i, p = %X, xx = %x\n",i,p,xx);
-			fflush(stdout);
-		} */
-//		printf( "Size of block after realloc: %u\n", isize );
 		return (isize);
 	}
 
-//	*p = (void*)malloc((length+1)*size);
 	*p = (void*)calloc((length+1), size);
 	
 	if (*p != NULL) {
-//		for (i=0;i<length;i++){
-//			*(p+i) = NULL;
-//		}
 		return ((length+1)*size);
 	}
 	return (0);
