@@ -1,7 +1,26 @@
-/* audispd-pconfig.h --
+/*
+ ============================================================================
+ Name        : ph-config.h
+ Author      : dad
+ Version     :
+ Copyright   : 2025
+ Description : The include file that goes with the ph-config.c routine.
+               The based on the include file written by Steve Grubb for the
+               audispd-pconfig.c configuration file management routine.
+ ============================================================================
+ */
+/* based on audispd-pconfig.h by Steve Grubb --
+ * modifications were made by John Kuras
+ *
+ * Steve's original code is:
  * Copyright 2007,2013,2023 Red Hat Inc.
  * All Rights Reserved.
  *
+ * All modification or enhancements made by John Kuras are:
+ * Copyright (c) John kuras 2025
+ * All Rights Reserved.
+ *
+ * License for Steve's work states:
  * This software may be freely redistributed and/or modified under the
  * terms of the GNU General Public License as published by the Free
  * Software Foundation; either version 2, or (at your option) any
@@ -17,12 +36,16 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor
  * Boston, MA 02110-1335, USA.
  *
+ * License for all modifications made by John Kuras is:
+ * DWTFYWWI (Do whatever you want with it)
+ *
  * Authors:
  *   Steve Grubb <sgrubb@redhat.com>
+ *   John Kuras <w7og@yahoo.com>
  */
 
-#ifndef AUDISPD_PCONFIG_H
-#define AUDISPD_PCONFIG_H
+#ifndef PH_CONFIG_H
+#define PH_CONFIG_H
 
 #include <sys/types.h>
 #include "libaudit.h"
@@ -53,5 +76,5 @@ void clear_pconfig(plugin_conf_t *config);
 int  load_pconfig(plugin_conf_t *config, char *file);
 void free_pconfig(plugin_conf_t *config);
 
-#endif
+#endif	// PH_CONFIG_H
 
