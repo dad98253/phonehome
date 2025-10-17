@@ -56,7 +56,8 @@ struct option longopts[] =
     { NULL, 0, NULL, 0, },
   };
 
-const char *readlinefp_cb (void **buf, int *len, void *arg);
+char * mypassword = "";
+
 void monitor_cb (const char *buf, int buflen, int writing, void *arg);
 void print_recipient_status (smtp_recipient_t recipient,
 			     const char *mailbox, void *arg);
@@ -65,11 +66,7 @@ int authinteract (auth_client_request_t request, char **result, int fields,
 int tlsinteract (char *buf, int buflen, int rwflag, void *arg);
 int handle_invalid_peer_certificate(long vfy_result);
 void event_cb (smtp_session_t session, int event_no, void *arg, ...);
-//void usage (void);
-//void version (void);
-/* FIXME getpass() is obsolete - previously declared in unistd.h */
-extern char *getpass(const char *prompt);
-
+char * getpassjk ( char * prompt );
 
 int sendalert (char * record) {
 	  smtp_session_t session;
@@ -260,7 +257,7 @@ int authinteract (auth_client_request_t request, char **result, int fields, void
 		    (request[i].flags & AUTH_CLEARTEXT) ? " (not encrypted)"
 		    					: "");
       if (request[i].flags & AUTH_PASS)
-	result[i] = getpass (prompt);
+	result[i] = getpassjk (prompt);
       else
 	{
 	  tty = open ("/dev/tty", O_RDWR);
@@ -285,7 +282,7 @@ int tlsinteract (char *buf, int buflen, int rwflag unused, void *arg unused)
   char *pw;
   int len;
 
-  pw = getpass ("certificate password");
+  pw = getpassjk ("certificate password");
   len = strlen (pw);
   if (len + 1 > buflen)
     return 0;
@@ -405,3 +402,7 @@ void event_cb (smtp_session_t session unused, int event_no, void *arg,...)
   va_end(alist);
 }
 
+char * getpassjk ( char * prompt )
+{
+	return (mypassword);
+}
