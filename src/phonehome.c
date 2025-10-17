@@ -84,8 +84,9 @@
 #include "libaudit.h"
 #include "common.h"
 #include "auparse.h"
+#ifdef DEBUG
 #include "debug2.h"
-
+#endif	// DEBUG
 
 static volatile int stop = 0;
 static volatile int hup = 0;
@@ -94,11 +95,7 @@ static int sendmail = 0;
 static int priority;
 static int interpret = 0;
 static char* mykeyval = "MailMe";
-#ifdef DEBUG
-static int debug = 1;
-FILE *fd; // debug File
-FILE *fp9 = NULL;
-#endif	// DEBUG
+
 
 const char *capngerrors[] = {
         "not initialized",
@@ -145,6 +142,7 @@ int main(int argc, const char *argv[])
 	struct timespec timeout;
 	int iret = 0;
 	int retval = 0;
+	const char *BUILTIN_PATH="/sbin/audisp-af_unix";
 	// initialize the system log routine
 	if (init_syslog(argc, argv)) return EXIT_FAILURE;
 #ifdef DEBUG
