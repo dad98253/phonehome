@@ -43,10 +43,10 @@
  *
  */
 
-#define _GNU_SOURCE // Required for fgets_unlocked
 
+#define _GNU_SOURCE // Required for fgets_unlocked
 #include "config.h"
-#include "ph-config.h"
+
 
 #include <string.h>
 #include <stdio.h>
@@ -56,94 +56,115 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <libgen.h>
+#include <ctype.h>
+#include <limits.h>
+#include <math.h>
+#define PHCONFIGMAIN
+#include "ph-config.h"
 //#include "private.h"
+
+
+extern const struct nv_list auparse_ids[];
+extern int IsValidEmail(const char *email);
+
 
 /* Local prototypes */
 struct nv_pair
 {
-	const char *name;
-	const char *value;
-	const char *option;
+	char *name;
+	char *value;
+	char *option;
+	int name_len;
+	int value_len;
+	int option_len;
 };
 
 struct kw_pair
 {
-	const char *name;
-	int (*parser)(struct nv_pair *, int, plugin_conf_t *);
+	char *name;
+	int (*parser)(struct nv_pair *, int, ph_config_t *);
 	int max_options;
+	int mask;
 };
 
-struct nv_list
-{
-	const char *name;
-	int option;
-};
 
 static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 		const char *file);
 static int nv_split(char *buf, struct nv_pair *nv);
-static const struct kw_pair *kw_lookup(const char *val);
-static int active_parser(struct nv_pair *nv, int line, 
-		plugin_conf_t *config);
-static int direction_parser(struct nv_pair *nv, int line, 
-		plugin_conf_t *config);
-static int path_parser(struct nv_pair *nv, int line, 
-		plugin_conf_t *config);
-static int service_type_parser(struct nv_pair *nv, int line, 
-		plugin_conf_t *config);
-static int args_parser(struct nv_pair *nv, int line, 
-		plugin_conf_t *config);
+static struct kw_pair *kw_lookup(const char *val);
+static int MTA_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
+static int hash_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
+static int key_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
+static int To_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
+static int Subject_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
+static int default_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
+static int filter_parser(struct nv_pair *nv, int line,
+		ph_config_t *config);
 static int format_parser(struct nv_pair *nv, int line, 
-		plugin_conf_t *config);
-static int sanity_check(plugin_conf_t *config, const char *file);
+		ph_config_t *config);
+static int sanity_check(ph_config_t *config, const char *file);
+static char* valid_keywords( char **string );
+static int nv_deesc(char *buf, char **name, int * name_len, char **ptr);
+static void SetInputMode(modes newmode);
+static int kw_unsetMask();
+static int nv_lookup_name ( const nv_list_t *nv, char * myname );
+static char * nv_lookup_option ( const nv_list_t *nv, int myoption );
+static ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs);
+static ph_Chain_t * find_chain_end(ph_Chain_t * chain);
 
-static const struct kw_pair keywords[] = 
+static struct kw_pair keywords[] =
 {
-  {"active",                   active_parser,			0 },
-  {"direction",                direction_parser,		0 },
-  {"path",                     path_parser,			0 },
-  {"type",                     service_type_parser,		0 },
-  {"args",                     args_parser,			2 },
-  {"format",                   format_parser,			0 },
-  { NULL,                      NULL,				0 }
+  {"MTA",				MTA_parser,				0,	1 },
+  {"hash",				hash_parser,			0,	1 },
+  {"key",				key_parser,				0,	1 },
+  {"To",				To_parser,				0,	1 },
+  {"Subject",			Subject_parser,			0,	1 },
+  {"default",			default_parser,			0,	1 },
+  {"filter",			filter_parser,			0,	1 },
+  {"format",			format_parser,			0,	1 },
+  { NULL,				NULL,					0,	0 }
 };
 
-static const struct nv_list active[] =
+static const struct nv_list default_arg[] =
 {
-  {"yes",  A_YES },
-  {"no",   A_NO },
-  { NULL,  0 }
+  {"pass",		DEFPASS },
+  {"reject",	DEFREJECT },
+  { NULL,		0 }
 };
 
-static const struct nv_list directions[] =
+static const struct nv_list filter_arg[] =
 {
-//  {"in",   D_IN },	FIXME: not supported yet
-  {"out",  D_OUT },
-  { NULL,  0 }
+  {"pass",		FILPASS },
+  {"reject",	FILREJECT },
+  {"end",		FILEND },
+  { NULL,		0 }
 };
 
-static const struct nv_list service_type[] =
+static const struct nv_list format_arg[] =
 {
-  {"builtin",  S_BUILTIN },
-  {"always",   S_ALWAYS },
-  { NULL,  0 }
+  {"macro",		FORMACRO },
+  {"include",	FORINCLUDE },
+  {"exclude",	FOREXCLUDE },
+  {"end",		FOREND },
+  { NULL,		0 }
 };
 
-static const struct nv_list formats[] =
-{
-  {"binary",  F_BINARY },
-  {"string",  F_STRING },
-  { NULL,  0 }
-};
-
-/* The message mode refers to where informational messages go
+/* The message mmode refers to where informational messages go
    0 - stderr, 1 - syslog, 2 - quiet. The default is quiet. */
 static message_t message_mode = MSG_QUIET;
 static debug_message_t debug_message = DBG_NO;
+static char * defaultMTA = NULL;
+static modes mode = HEADER;
 
-void set_aumessage_mode(message_t mode, debug_message_t debug)
+void set_aumessage_mode(message_t mmode, debug_message_t debug)
 {
-        message_mode = mode;
+        message_mode = mmode;
         debug_message = debug;
 }
 
@@ -173,38 +194,33 @@ void audit_msg(int priority, const char *fmt, ...)
 /*
  * Set everything to its default value
 */
-void clear_phonfig(plugin_conf_t *config)
+void clear_phConfig(ph_config_t * phConfig)
 {
-	int i;
 
-	config->active = A_NO;
-	config->direction = D_UNSET;
-	config->path = NULL;
-	config->type = S_ALWAYS;
-	for (i=0; i< (MAX_PLUGIN_ARGS + 2); i++)
-		config->args[i] = NULL;
-	config->format = F_STRING;
-	config->plug_pipe[0] = -1;
-	config->plug_pipe[1] = -1;
-	config->pid = 0;
-	config->inode = 0;
-	config->checked = 0;
-	config->name = NULL;
-	config->restart_cnt = 0;
+	defaultMTA = (char *) malloc ( strlen( MTA_DEFAULT ) + 2 );
+	strcpy( defaultMTA , MTA_DEFAULT );
+	phConfig->MTA = defaultMTA ;
+	phConfig->hashSize = HASH_DEFAULT;
+	phConfig->phKeyConfig = NULL;
+	phConfig->phKeyConfigSize = 0;
+	phConfig->LastMailTo = NULL;
+	phConfig->LastSubject = NULL;
+
+	return;
 }
 
-int load_phonfig(plugin_conf_t *config, char *file)
+int load_phConfig(ph_config_t *phConfig, char *file)
 {
-	int fd, rc, mode, lineno = 1;
+	int fd, rc, lineno = 1;
 	struct stat st;
 	FILE *f;
 	char buf[160];
+	char *tmpString;
 
-	clear_phonfig(config);
+	clear_phConfig(phConfig);
 
 	/* open the file */
-	mode = O_RDONLY;
-	rc = open(file, mode);
+	rc = open(file, O_RDONLY);
 	if (rc < 0) {
 		if (errno != ENOENT) {
 			audit_msg(LOG_ERR, "Error opening %s (%s)", file,
@@ -254,6 +270,7 @@ int load_phonfig(plugin_conf_t *config, char *file)
 		return 1;
 	}
 
+	SetInputMode ( HEADER );
 	while (get_line(f, buf, sizeof(buf), &lineno, file)) {
 		// convert line into name-value pair
 		const struct kw_pair *kw;
@@ -272,6 +289,20 @@ int load_phonfig(plugin_conf_t *config, char *file)
 					"Missing equal sign for line %d in %s",
 					lineno, file);
 				break;
+			case 3: // masked keyword
+				audit_msg(LOG_ERR,
+					"Out of order keyword for line %d in %s",
+					lineno, file);
+				audit_msg(LOG_ERR,
+					"The permitted keywords in this context are: %s",
+					valid_keywords(&tmpString));
+					free(tmpString);
+				break;
+			case 4: // no matching "
+				audit_msg(LOG_ERR,
+					"No matching end quote for line %d in %s",
+					lineno, file);
+				break;
 			default: // something else went wrong...
 				audit_msg(LOG_ERR,
 					"Unknown error for line %d in %s",
@@ -287,14 +318,29 @@ int load_phonfig(plugin_conf_t *config, char *file)
 			return 1;
 		}
 
+
 		/* identify keyword or error */
 		kw = kw_lookup(nv.name);
 		if (kw->name == NULL) {
-			audit_msg(LOG_ERR,
-				"Unknown keyword \"%s\" in line %d of %s",
-				nv.name, lineno, file);
-			fclose(f);
-			return 1;
+			if ( mode != FILTER && mode != FORMAT ) {
+				audit_msg(LOG_ERR,
+					"Unknown keyword \"%s\" in line %d of %s",
+					nv.name, lineno, file);
+				fclose(f);
+				return 1;
+			} else {
+				xxxxxxxxxxxxx   process filters and formats here
+			}
+		} else { // is this keyword masked?
+			if (kw->mask == 0) {
+				if ( mode != FILTER && mode != FORMAT ) {
+					audit_msg(LOG_ERR,
+						"Out of order keyword \"%s\" in line %d of %s",
+						nv.name, lineno, file);
+					fclose(f);
+					return 1;
+				}
+			}
 		}
 
 		/* Check number of options */
@@ -308,7 +354,7 @@ int load_phonfig(plugin_conf_t *config, char *file)
 		}
 
 		/* dispatch to keyword's local parser */
-		rc = kw->parser(&nv, lineno, config);
+		rc = kw->parser(&nv, lineno, phConfig);
 		if (rc != 0) {
 			fclose(f);
 			return 1; // local parser puts message out
@@ -318,9 +364,9 @@ int load_phonfig(plugin_conf_t *config, char *file)
 	}
 
 	fclose(f);
-	config->name = strdup(basename(file));
+	phConfig->name = strdup(basename(file));
 	if (lineno > 1)
-		return sanity_check(config, file);
+		return sanity_check(phConfig, file);
 	return 0;
 }
 
@@ -356,47 +402,51 @@ static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 static int nv_split(char *buf, struct nv_pair *nv)
 {
 	/* Get the name part */
-	char *ptr, *saved;
+	char *ptr;
+	char * chdummy;
+	int idummy;
 
 	nv->name = NULL;
 	nv->value = NULL;
 	nv->option = NULL;
-	ptr = strtok_r(buf, " ", &saved);
-	if (ptr == NULL)
-		return 0; /* If there's nothing, go to next line */
-	if (ptr[0] == '#')
-		return 0; /* If there's a comment, go to next line */
-	nv->name = ptr;
+	nv->name_len = 0;
+	nv->value_len = 0;
+	nv->option_len = 0;
+	if ( buf == NULL ) return 5;
+	if ( nv == NULL ) return 5;
 
-	/* Check for a '=' */
-	ptr = strtok_r(NULL, " ", &saved);
-	if (ptr == NULL)
-		return 1;
-	if (strcmp(ptr, "=") != 0)
-		return 2;
+	if ( strlen(buf) == 0 ) return 0; // If there's nothing, go to next line
+	if ( strcspn(buf, " ") == strlen(buf) ) return 0; // If it's a all blank line, go to next line
+	if ( buf[0] == '#' ) return 0; // If there's a comment, go to next line
+
+	int iret = nv_deesc(buf, &(nv->name), &(nv->name_len), &ptr);
+	if ( iret == -1 ) return 4;
+
+///////////////////////////////////////////////////////////////////
+	// Check for a '=', if found, we will skip over it
+	if ( *ptr == '=' ) ptr = memmove( ptr, ptr+1 , strlen(ptr+1) + 1 );
+
 
 	/* get the value */
-	ptr = strtok_r(NULL, " ", &saved);
-	if (ptr == NULL)
-		return 1;
-	nv->value = ptr;
+	iret = nv_deesc(ptr, &(nv->value), &(nv->value_len), &ptr);
+	if ( iret == -1 ) return 4;
+
 
 	/* See if there's an option */
-	ptr = strtok_r(NULL, " ", &saved);
-	if (ptr) {
-		nv->option = ptr;
+	iret = nv_deesc(ptr, &(nv->option), &(nv->option_len), &ptr);
+	if ( iret == -1 ) return 4;
+	if ( iret == -2 ) return 0; // no option, that's ok
 
-		/* Make sure there's nothing else */
-		ptr = strtok_r(NULL, " ", &saved);
-		if (ptr)
-			return 1;
-	}
+
+	/* Make sure there's nothing else */
+	iret = nv_deesc(ptr, &chdummy, &idummy, &ptr);
+	if ( iret > -1 ) return 1;
 
 	/* Everything is OK */
 	return 0;
 }
 
-static const struct kw_pair *kw_lookup(const char *val)
+static struct kw_pair *kw_lookup(const char *val)
 {
 	int i = 0;
 	while (keywords[i].name != NULL) {
@@ -407,124 +457,344 @@ static const struct kw_pair *kw_lookup(const char *val)
 	return &keywords[i];
 }
 
-static int active_parser(struct nv_pair *nv, int line,
-		plugin_conf_t *config)
+static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
-	int i;
+	int extra = 0;
 
-	for (i=0; active[i].name != NULL; i++) {
-		if (strcasecmp(nv->value, active[i].name) == 0) {
-			config->active = active[i].option;
-			return 0;
-		}
-	}
-	audit_msg(LOG_ERR, "Option %s not found - line %d", nv->value, line);
-	return 1;
-}
+    if (nv->value == NULL || nv->value_len == 0 ) {
+    	audit_msg(LOG_ERR, "MTA value %s is missing - line %d", nv->value, line);
+    	return 1;
+    }
+	// check for a port number separator
+	if ( strpbrk(nv->value, ":") == NULL ) extra = 3;
+	config->MTA = (char *)calloc(1, nv->value_len + 1 + extra);
+	memmove( config->MTA, nv->value , nv->value_len );
+    // check for a blank string
+	if ( strcspn(config->MTA, " ") == strlen(config->MTA) ) {
+    	audit_msg(LOG_ERR, "MTA value %s is blank - line %d", nv->value, line);
+    	return 1;
+    }
+	if ( extra ) strcat(config->MTA, ":25"); // add default port 25 if none specified
 
-static int direction_parser(struct nv_pair *nv, int line,
-		plugin_conf_t *config)
-{
-	int i;
-
-	for (i=0; directions[i].name != NULL; i++) {
-		if (strcasecmp(nv->value, directions[i].name) == 0) {
-			config->direction = directions[i].option;
-			return 0;
-		}
-	}
-	audit_msg(LOG_ERR, "Option %s not found - line %d", nv->value, line);
-	return 1;
-}
-
-static const char *BUILTIN_PATH="/sbin/audisp-af_unix";
-static int path_parser(struct nv_pair *nv, int line,
-	plugin_conf_t *config)
-{
-	char *dir = NULL, *tdir;
-
-	if (nv->value == NULL) {
-		config->path = NULL;
-		return 0;
-	}
-
-	if (strncasecmp(nv->value, "builtin_", 8) == 0) {
-		audit_msg(LOG_WARNING,
-			  "Option %s line %d is obsolete - using %s",
-			  nv->value, line, BUILTIN_PATH);
-		config->path = strdup(BUILTIN_PATH);
-		return 0;
-	}
-
-	/* get dir form name. */
-	tdir = strdup(nv->value);
-	if (tdir)
-		dir = dirname(tdir);
-	if (dir == NULL || strlen(dir) < 4) { //  '/var' is shortest dirname
-		audit_msg(LOG_ERR,
-			"The directory name: %s is too short - line %d",
-			dir, line);
-		free(tdir);
-		return 1;
-	}
-
-	free((void *)tdir);
-	free((void *)config->path);
-	config->path = strdup(nv->value);
-	if (config->path == NULL)
-		return 1;
 	return 0;
 }
 
-static int service_type_parser(struct nv_pair *nv, int line,
-		plugin_conf_t *config)
+static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
-	int i;
+	char * str;
+    char *endptr;
+    long val;
 
-	for (i=0; service_type[i].name != NULL; i++) {
-		if (strcasecmp(nv->value, service_type[i].name) == 0) {
-			config->type = service_type[i].option;
-			if (config->type == S_BUILTIN) {
-				audit_msg(LOG_WARNING,
-		"Option %s line %d is obsolete - update it", nv->value, line);
-				config->type = S_ALWAYS;
-			}
-			return 0;
-		}
-	}
-	audit_msg(LOG_ERR, "Option %s not found - line %d", nv->value, line);
-	return 1;
-}
+    str = (char *)calloc(1, nv->value_len + 1);
+    // Handle empty string or string containing only whitespace
+    if (str == NULL || *str == '\0') {
+    	audit_msg(LOG_ERR, "hash value %s is missing - line %d", nv->value, line);
+    	free(str);
+    	return 1;
+    }
 
-static int args_parser(struct nv_pair *nv, int line,
-	plugin_conf_t *config)
-{
-	int i;
+    // Skip leading whitespace
+    while (isspace((unsigned char)*str)) {
+        str++;
+    }
 
-	for (i=0; i < (MAX_PLUGIN_ARGS + 2); i++) {
-		free((void *)config->args[i]);
-		config->args[i] = NULL;
-	}
+    // If after skipping whitespace, the string is empty, it's not an integer
+    if (*str == '\0') {
+    	audit_msg(LOG_ERR, "hash value %s is blank - line %d", nv->value, line);
+    	free(str);
+    	return 1;
+    }
 
-	config->args[1] = strdup(nv->value);
-	if (nv->option)
-		config->args[2] = strdup(nv->option);
+    // Clear errno before calling strtol to reliably detect errors
+    errno = 0;
+
+    // Convert the string to a long integer
+    val = strtol(str, &endptr, 10); // Base 10 for decimal integers
+
+    // Check for conversion errors
+    if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || // Overflow/underflow
+        (errno != 0 && val == 0)) { // Other errors
+    	audit_msg(LOG_ERR, "hash value %s is invalid - line %d", nv->value, line);
+    	free(str);
+    	return 1;
+    }
+
+    // Check if the entire string was consumed by strtol (no non-numeric characters left)
+    if (*endptr != '\0') {
+    	audit_msg(LOG_ERR, "hash value %s Contains non-numeric characters after the number - line %d", nv->value, line);
+    	free(str);
+    	return 1;
+    }
+	free(str);
+
+	// save the integer value
+	config->hashSize = (int)val;
+
 	return 0;
 }
 
-static int format_parser(struct nv_pair *nv, int line,
-		plugin_conf_t *config)
+
+static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	int i;
+	unsigned long int result;
+	unsigned long int sum = 0;
+	ph_KeyConfig_t * tempKeyConfig, *KeyConfigTail;
 
-	for (i=0; formats[i].name != NULL; i++) {
-		if (strcasecmp(nv->value, formats[i].name) == 0) {
-			config->format = formats[i].option;
-			return 0;
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	SetInputMode(KEY);
+
+	// check if the hash table has been initialized
+	if ( phKeyConfigs == NULL ) {
+		config->hashSize = config->hashSize - (config->hashSize)%256; // make sure its modulo 256
+		if ( config->hashSize < 256 ) config->hashSize = 256;	// minimum hash table size
+		// make sure the table size is a power of 2 and calculate the mask
+		if ((config->hashSize & (config->hashSize - 1)) != 0) {
+		    double log_result = log2((double)config->hashSize);
+		    double ceil_result = ceil(log_result);
+		    result = (unsigned int)pow(2.0, ceil_result);
+		    if (( result & ( result - 1 ) ) != 0 ) {
+		       	audit_msg(LOG_ERR, "hash mask calculation failed. hash,result = %i %u ... this is a program bug",config->hashSize,result);
+		       	return 1;
+		    }
+		    config->hashSize = (int)result;
+		}
+		config->hashmask = config->hashSize - 1;
+		phKeyConfigs = (ph_KeyConfig_t ** ) calloc(sizeof(ph_KeyConfig_t *), config->hashSize);
+	}
+
+	// Allocate a new ph_KeyConfig struct
+	config->phKeyConfig = tempKeyConfig = (ph_KeyConfig_t *) calloc(sizeof(ph_KeyConfig_t), 1);
+	tempKeyConfig->key = strndup(nv->value,nv->value_len);
+	tempKeyConfig->MailTo = strdup(config->LastMailTo);
+	tempKeyConfig->defaultPolicy = PASS;
+	// hash the key
+	for ( i = 0; i < strlen(nv->value); i++) {
+		sum+= (unsigned char)( *((nv->value)+i) );
+	}
+	i = sum & config->hashmask;
+	// Check for collision
+	if ( phKeyConfigs[i] != NULL ) {
+		// find the end of the linked list...
+		KeyConfigTail = TailofKeyConfig(phKeyConfigs[i]);
+		KeyConfigTail->next = tempKeyConfig;
+	} else {
+		phKeyConfigs[i] = tempKeyConfig;
+	}
+
+	return 0;
+}
+
+static int To_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	// if value is blank, there's nothing to do
+	if (nv->value == NULL) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	SetInputMode(KEY);
+
+	char * tempValue;
+	tempValue = strndup(nv->value, nv->value_len);
+
+	if ( IsValidEmail(tempValue) == 0 ) {	// check the syntax of the email address
+		audit_msg(LOG_WARNING, "The email address \"%s\" specified at line %d looks wrong, but it will be used anyway", tempValue, line);
+	}
+
+	// set the last used email in the config struct
+	if ( config->LastMailTo != NULL ) free(config->LastMailTo);
+	config->LastMailTo = tempValue;
+
+	// set it in the current phKeyConfig, too (if one exists)
+	if ( config->phKeyConfig != NULL ) {
+		if ( config->phKeyConfig->MailTo != NULL ) free(config->phKeyConfig->MailTo);
+		config->phKeyConfig->MailTo = strdup(tempValue);
+	}
+
+	return 0;
+
+}
+
+static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	char *result1;
+	char *tempValue;
+
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	SetInputMode(KEY);
+
+	tempValue = strndup(nv->value, nv->value_len);
+
+	// check for the string "$hostname" if we find it, substitute our hostname
+	if ( (result1 = strstr(tempValue, "$hostname")) != NULL ) {
+		char hostname[HOST_NAME_MAX + 1]; // Buffer to store the hostname
+		if (gethostname(hostname, HOST_NAME_MAX + 1) == 0) {
+			char *temp2;
+			temp2 = tempValue;
+			tempValue = (char *) malloc(strlen(temp2) - strlen("$hostname") + strlen(hostname) + 2 );
+			int numtocpy = (int)(result1-temp2);
+			strncpy(tempValue, temp2, numtocpy );
+			*(tempValue+numtocpy) = '\000';
+			strcat(tempValue, hostname);
+			char * start = ( result1 + strlen("$hostname") );
+			strcat(tempValue, start);
+			free(temp2);
+		} else {
+			audit_msg(LOG_WARNING, "Error getting hostname at line %i because %s", line, strerror(errno));
 		}
 	}
-	audit_msg(LOG_ERR, "Option %s not found - line %d", nv->value, line);
-	return 1;
+
+	// set the last used subject in the config struct
+	if ( config->LastSubject != NULL ) free(config->LastSubject);
+	config->LastSubject = tempValue;
+
+	// set it in the current phKeyConfig, too (if one exists)
+	if ( config->phKeyConfig != NULL ) {
+		if ( config->phKeyConfig->Subject != NULL ) free(config->phKeyConfig->Subject);
+		config->phKeyConfig->Subject = strdup(tempValue);
+	}
+
+	return 0;
+}
+
+static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	char *tempValue;
+
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	SetInputMode(KEY);
+
+	tempValue = strndup(nv->value, nv->value_len);
+	// check for an option match
+	int match = nv_lookup_name ( default_arg, tempValue );
+
+	if ( match == 0 ) {
+		audit_msg(LOG_ERR, "\"%s\" not a valid default option - line %d", tempValue, line);
+		return 0;
+	}
+	free(tempValue);
+
+	// set the last used default in the config struct
+	config->LastDefault = match;
+
+	// set it in the current phKeyConfig, too (if one exists)
+	if ( config->phKeyConfig != NULL ) {
+		config->phKeyConfig->defaultPolicy = match;
+	}
+
+	return 0;
+}
+
+static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	char *tempValue;
+	ph_Chain_t * TempFilterChain;
+
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	SetInputMode(FILTER);
+
+	tempValue = strndup(nv->value, nv->value_len);
+	// check for an option match
+	int match = nv_lookup_name ( filter_arg, tempValue );
+
+	if ( match == 0 ) {
+		audit_msg(LOG_ERR, "\"%s\" not a valid filter option - line %d", tempValue, line);
+		return 0;
+	}
+	free(tempValue);
+
+	if ( match == FILEND ) {
+		// tack wild card pass/reject at the end of the list to iplement the default feature
+		if ( config->phKeyConfig->phFilterChain == NULL ) {
+			// no chain, yet. create one and set the wild card
+			TempFilterChain = config->phKeyConfig->phFilterChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
+		} else {
+			// find the end of the chain
+			TempFilterChain = find_chain_end(config->phKeyConfig->phFilterChain);
+			TempFilterChain->next = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
+			TempFilterChain = TempFilterChain->next;
+		}
+		TempFilterChain->PassOrReject = config->phKeyConfig->defaultPolicy;
+		TempFilterChain->label = strdup("*");
+		TempFilterChain->value = strdup("*");
+		// reset input mode
+		SetInputMode(KEY);
+		return 0;
+	}
+	// set it in the current phKeyConfig, too (if one exists)
+	if ( config->phKeyConfig != NULL ) {
+		config->phKeyConfig->currentPolicy = match;
+	} else {
+		audit_msg(LOG_ERR, "Out of order filter option; must define key before filter - line %d", line);
+		return 1;
+	}
+
+	return 0;
+}
+
+static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	char *tempValue;
+	ph_Chain_t * TempFormatChain;
+
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	SetInputMode(FORMAT);
+
+	tempValue = strndup(nv->value, nv->value_len);
+	// check for an option match
+	int match = nv_lookup_name ( format_arg, tempValue );
+
+	if ( match == 0 ) {
+		audit_msg(LOG_ERR, "\"%s\" not a valid format option - line %d", tempValue, line);
+		return 0;
+	}
+	free(tempValue);
+
+	if ( match == FOREND ) {
+		// tack wild card pass/reject at the end of the list to iplement the default feature
+		if ( config->phKeyConfig->phFormatChain == NULL ) {
+			// no chain, yet. create one and set the wild card
+			TempFormatChain = config->phKeyConfig->phFormatChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
+		} else {
+			// find the end of the chain
+			TempFormatChain = find_chain_end(config->phKeyConfig->phFormatChain);
+			TempFormatChain->next = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
+			TempFormatChain = TempFormatChain->next;
+		}
+		if ( config->phKeyConfig->currentFormat == FORINCLUDE ) {
+			TempFormatChain->PassOrReject = FOREXCLUDE;
+		} else {
+			TempFormatChain->PassOrReject = FORINCLUDE;
+		}
+		TempFormatChain->label = strdup("*");
+		TempFormatChain->value = strdup("*");
+		// reset input mode
+		SetInputMode(KEY);
+		return 0;
+	}
+	// set it in the current phKeyConfig, too (if one exists)
+	if ( config->phKeyConfig != NULL ) {
+		config->phKeyConfig->currentFormat = match;
+	} else {
+		audit_msg(LOG_ERR, "Out of order filter option; must define key before filter - line %d", line);
+		return 1;
+	}
+
+	return 0;
 }
 
 /*
@@ -532,10 +802,10 @@ static int format_parser(struct nv_pair *nv, int line,
  * options. At this point, all fields have been read. Returns 0 if no
  * problems and 1 if problems detected.
  */
-static int sanity_check(plugin_conf_t *config, const char *file)
+static int sanity_check(ph_config_t *config, const char *file)
 {
 	/* Error checking */
-	if (config->active == A_YES) {
+/*	if (config->active == A_YES) {
 		struct stat buf;
 
 		if (config->path == NULL) {
@@ -547,8 +817,8 @@ static int sanity_check(plugin_conf_t *config, const char *file)
 		if (strncasecmp(config->path, "builtin_", 8) == 0)
 			goto out;
 
-		/* If the file exists, see that its regular, owned by root,
-		 * and not world anything */
+		// If the file exists, see that its regular, owned by root,
+		// and not world anything
 		if (stat(config->path, &buf) < 0) {
 			audit_msg(LOG_ERR, "Unable to stat %s (%s)",
 				  config->path,	strerror(errno));
@@ -574,23 +844,229 @@ static int sanity_check(plugin_conf_t *config, const char *file)
 		config->inode = buf.st_ino;
 	}
 out:
+*/
 	return 0;
 }
 
-void free_pconfig(plugin_conf_t *config)
-{
-	int i;
 
-	if (config == NULL)
+void free_chain(ph_Chain_t * chain) {
+
+	if ( chain->next == NULL ) {
 		return;
+	} else {
+		free_chain( chain->next );
+	}
+	free( chain->label );
+	free( chain->value );
+	free ( chain );
+	chain = NULL;
 
-	for (i=0; i < (MAX_PLUGIN_ARGS + 2); i++)
-		free(config->args[i]);
-	if (config->plug_pipe[0] >= 0)
-		close(config->plug_pipe[0]);
-	if (config->plug_pipe[1] >= 0)
-		close(config->plug_pipe[1]);
-	free((void *)config->path);
-	free((void *)config->name);
+	return;
 }
 
+
+ph_Chain_t * find_chain_end(ph_Chain_t * chain) {
+
+	if ( chain->next == NULL ) {
+		return (chain);
+	} else {
+		return (find_chain_end( chain->next ));
+	}
+
+}
+
+
+void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
+
+	if ( phKeyConfig->next == NULL ) {
+		return;
+	} else {
+		free_phKeyConfig( phKeyConfig->next );
+	}
+	free( phKeyConfig->MailTo );
+	free( phKeyConfig->Subject );
+	free_chain( phKeyConfig->phFilterChain );
+	free_chain( phKeyConfig->phFormatChain );
+	free_chain( phKeyConfig->phFormatMacroChain );
+	free ( phKeyConfig );
+	phKeyConfig = NULL;
+
+	return;
+}
+
+void free_phConfig(ph_config_t *phConfig)
+{
+
+	if (phConfig == NULL) return;
+
+	if ( phConfig->MTA != NULL ) free(phConfig->MTA);
+	if ( phConfig->phKeyConfig != NULL ) free_phKeyConfig( phConfig->phKeyConfig ); // free hash table
+	phConfig->phKeyConfigSize = 0;
+	if ( phConfig->LastMailTo != NULL ) free(phConfig->LastMailTo);
+	if ( phConfig->LastSubject != NULL ) free(phConfig->LastSubject);
+
+	return;
+}
+
+static char* valid_keywords( char **string ) {
+	*string = (char *)malloc(2);
+	**string = '\000';
+	return (*string);
+}
+
+static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
+	int fldlen = 0;
+	char * strStart;
+	char * tmptr;
+
+	strcpy(buf, buf+strcspn(buf, " ")); // skip all preceding blanks /////////////////  need to use memmove???...
+	*ptr = buf;
+	if ( **ptr == '\000' ) return -2;
+
+	/*
+	if first char is a *, skip over it and...
+	look for either a \ or "
+	if the " comes next it is oes (done)
+	if the \ comes next copy over it, skip over the first letter copied & continue search
+	if neither found, no matching " !
+
+	if first char is not a *...
+	look for either a \ or " "
+	if a " " is found or neither is found, it is eos (done)
+	if the \ comes next copy over it, skip over the first letter copied & continue search
+*/
+	if ( **ptr == '"' ) {
+		// first character is a double quote, find the matching double quote
+		strStart = (*ptr)++;
+		while(1) {
+			if ( (tmptr = strpbrk(*ptr, "\\\"")) == NULL ) return -1;
+			if ( *tmptr == '\"' ) { // matching " found
+				fldlen = (int)(tmptr - strStart );
+				memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // remove the closing " in case we are not done
+				break;
+			}
+			*ptr = memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // found a \ .. un-escape it
+		}
+	} else {
+		// not a quoted string... de-escape it and find the next blank
+		strStart = *ptr;
+		while(1) {
+			if ( (tmptr = strpbrk(*ptr, "\\ ")) == NULL ) { // end of string found
+				fldlen = strlen(*ptr);
+				break;
+			}
+			if ( *tmptr == ' ' ) { // blank space found
+				fldlen = (int)(tmptr - strStart );
+				break;
+			}
+			*ptr = memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // found a \ .. un-escape it
+		}
+	}
+	*name = strStart;
+	*name_len = fldlen;
+
+	return fldlen;
+}
+
+static int kw_unsetMask() {
+	int i = 0;
+	while (keywords[i].name != NULL) {
+		keywords[i].mask = 1;
+		i++;
+	}
+	return 1;
+}
+
+void SetInputMode(modes newmode) {
+	struct kw_pair *kw;
+
+	mode = newmode;
+	kw_unsetMask();
+
+	switch (mode) {
+	    case HEADER:
+	        break;
+	    case KEY:
+	    	kw = kw_lookup("MTA");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("hash");
+	    	kw->mask = 0;
+	        break;
+	    case DEFSET:
+	    	kw = kw_lookup("MTA");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("hash");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("default");
+	    	kw->mask = 0;
+	        break;
+	    case FILTER:
+	    	kw = kw_lookup("MTA");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("hash");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("key");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("To");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("Subject");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("default");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("format");
+	    	kw->mask = 0;
+	        break;
+	    case FORMAT:
+	    	kw = kw_lookup("MTA");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("hash");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("key");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("To");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("Subject");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("default");
+	    	kw->mask = 0;
+	    	kw = kw_lookup("filter");
+	    	kw->mask = 0;
+	        break;
+	    default:
+			audit_msg(LOG_ERR, "SetInputMode called with unknown mode %i ",mode);
+	}
+
+
+	return;
+}
+
+int nv_lookup_name ( const nv_list_t *nv, char * myname ) {
+	int i = 0;
+
+	while (nv[i].name != NULL) {
+		if (strcasecmp(myname, nv[i].name) == 0) break;
+		i++;
+	}
+
+	return (nv[i].option);
+}
+
+static char * nv_lookup_option ( const nv_list_t *nv, int myoption ) {
+	int i = 0;
+
+	while ( nv[i].name != NULL) {
+		if (nv[i].option == myoption ) break;
+		i++;
+	}
+
+	return (nv[i].name);
+}
+
+ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs) {
+
+		if ( phKeyConfigs->next == NULL ) {
+			return (phKeyConfigs);
+		} else {
+			return ( TailofKeyConfig( phKeyConfigs->next ) );
+		}
+}
