@@ -146,4 +146,6 @@ src/mail-file.c
 src/sendto.h
 src/ProcessCommExtError.c
 src/windows.c
+src/private.h
+src/typetab.h
 
