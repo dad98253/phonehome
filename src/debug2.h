@@ -29,6 +29,12 @@
 #define INITNEGDONE	=-1
 #endif	// DEBUGMAIN
 
+#include <stdio.h>
+
+EXTERN int debug INITIZERO;
+EXTERN FILE *fd INITNULL; // debug File
+EXTERN FILE *fp9 INITNULL;
+
 
 #if __linux__   //  or #if __GNUC__
 #if __x86_64__ || __ppc64__
@@ -305,6 +311,16 @@ EXTERN unsigned char bdebug_flag_set[NUMDEBUGFLAGS] INITSZERO;
 #define DBGRESETALLATTRIBUTES	""
 #define DBGRESETALLATTRIBUTESLEN	0
 
+
 #endif  //    DEBUG
+
+#undef EXTERN
+#undef INITIZERO
+#undef INITSZERO
+#undef INITBOOLFALSE
+#undef INITBOOLTRUE
+#undef INITNULL
+#undef INITNEGDONE
+
 #endif  //    fi _JOHN_DEBUG_H
 

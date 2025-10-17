@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 /******************************************************************************\
@@ -207,3 +207,4 @@ int ClosePort(void) {
 	return 1;
 }
 
+#endif	// DEBUG

@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 #include "lindows.h"
@@ -323,5 +323,5 @@ printf("fmt = \"%s\"\n",fmt);
 	return;
 }
 
-
+#endif	// DEBUG
 

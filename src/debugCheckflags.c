@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 #include "debug2.h"
@@ -12,3 +12,4 @@ int debugCheckflags(unsigned int debugflag)
 }
 
 
+#endif	// DEBUG

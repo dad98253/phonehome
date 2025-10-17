@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 #include <malloc.h>
@@ -13,3 +13,4 @@ void debug_close() {
 	return;
 }
 
+#endif	// DEBUG

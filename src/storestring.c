@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 #include <string.h>
@@ -115,3 +115,5 @@ printf( "Address of block (%llx) after malloc: size >= %i\n", *p, length+4 );
 	}
 	return (0);
 }
+
+#endif	// DEBUG

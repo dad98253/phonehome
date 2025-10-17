@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 
@@ -24,3 +24,4 @@ int debug_init()
 	return(0);
 }
 
+#endif	// DEBUG

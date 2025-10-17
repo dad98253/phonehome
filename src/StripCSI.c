@@ -1,4 +1,4 @@
-
+#ifdef DEBUG
 #include "config.h"
 
 #ifndef WINDOZE
@@ -105,3 +105,5 @@ bool StripCSI(char *ci, char *co)
 
 	return (false);
 }
+
+#endif	// DEBUG
