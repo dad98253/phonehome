@@ -410,11 +410,9 @@ static int init_syslog(int argc, const char *argv[])
 			}
 		}
 	}
-	syslog(LOG_INFO,
-		"phonehome plugin initialized with facility %d and priority %d",
-		facility, priority);
-	if (facility != LOG_USER)
-		openlog("audispd", 0, facility);
+	pid_t mypid = getpid();
+	syslog(LOG_INFO, "plugin starting with pid=%d", mypid);
+	if (facility != LOG_USER) openlog("audispd", 0, facility);
 	return 0;
 }
 
