@@ -84,54 +84,88 @@
 #define PASS	1
 #define REJECT	0
 #define MTA_DEFAULT	"localhost:25"
+#define MAILTO_DEFAULT	"root"
+#define SUBJECT_DEFAULT	"Warning from $hostname"
 #define HASH_DEFAULT	1024
+#define TYPE_HASH_DEFAULT	256
+#define FIELD_HASH_DEFAULT	256
+#define WILDCARD	"*"
+#define WILDCARDID	-9998
+#define NOOPT	-9999
 
 
 typedef enum { DEFPASS, DEFREJECT } default_t;
 typedef enum { FILPASS, FILREJECT, FILEND } filter_t;
 typedef enum { FORMACRO, FORINCLUDE, FOREXCLUDE, FOREND } format_t;
 
+typedef struct ph_config
+{
+	char *	name;	// config file basename
+	char *	MTA;
+	int		hashSize;
+	unsigned long int hashmask;
+	int		typehashSize;
+	int		fieldhashSize;
+	struct	ph_KeyConfig * phKeyConfig;
+	struct	ph_FilterChain * CurrentFilterChain;
+	int		phKeyConfigSize;
+	char *	LastMailTo;
+	char *	LastSubject;
+	int		LastDefault;
+} ph_config_t;
 
 typedef struct ph_KeyConfig
 {
-	char * key;
-	char * MailTo;
-	char * Subject;
-	int defaultPolicy;
-	int currentPolicy;
-	int currentFormat;
-	struct ph_Chain * phFilterChain;
-	struct ph_Chain * phFormatChain;
-	struct ph_Chain * phFormatMacroChain;
-	struct ph_KeyConfig * next;
+	char *	key;
+	char *	MailTo;
+	char *	Subject;
+	int		defaultPolicy;
+	int		currentPolicy;
+	int		currentFormat;
+	struct	ph_FilterChain * phFilterChain;
+	struct	ph_Chain * phFormatChain;
+	struct	ph_Chain * phFormatMacroChain;
+	struct	ph_KeyConfig * next;
 } ph_KeyConfig_t;
 
-
-typedef struct ph_config
+typedef struct ph_FilterChain
 {
-	char * name;	// config file basename
-	char * MTA;
-	int    hashSize;
-	unsigned long int hashmask;
-	struct ph_KeyConfig * phKeyConfig;
-	int    phKeyConfigSize;
-	char * LastMailTo;
-	char * LastSubject;
-	int    LastDefault;
-} ph_config_t;
+	char *	label;	// ??
+	char *	value;	// ??
+	int		PassOrReject;
+	int		TypeHashSize;
+	struct	ph_Type_Chain * DefaultTypeChain;
+	struct	ph_Type_Chain ** TypeHashArray;
+	struct	ph_FilterChain * next;
+} ph_FilterChain_t;
+
+typedef struct ph_Type_Chain
+{
+	char *	Name;
+	int		Type;
+	int		Used;	// used during event filtering operation to prevent reuse of
+					// type filters
+					// must always be reset to zero when event evaluation is complete
+	int		PassOrReject;
+	int		FieldHashSize;
+	struct	ph_Chain ** FieldHashArray;
+	struct	ph_Type_Chain * next;
+} ph_Type_Chain_t;
 
 typedef struct ph_Chain
 {
-	char * label;
-	char * value;
-	int PassOrReject;
-	struct ph_Chain * next;
+	char *	label;
+	int		Type;
+	char *	value;
+	int		FieldID;
+	int		PassOrReject;
+	struct	ph_Chain * next;
 } ph_Chain_t;
 
 typedef struct nv_list
 {
-	char *name;
-	int option;
+	char *	name;
+	int		option;
 } nv_list_t;
 
 typedef enum {
@@ -145,7 +179,7 @@ typedef enum {
 EXTERN ph_KeyConfig_t ** phKeyConfigs INITNULL ;
 EXTERN ph_Chain_t * phFormatChain INITNULL ;
 EXTERN ph_Chain_t * phFormatMacroChain INITNULL;
-EXTERN ph_config_t phConfig;
+EXTERN struct ph_config phConfig;
 
 
 

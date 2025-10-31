@@ -22,6 +22,7 @@
 #include <auth-client.h>
 #include <libesmtp.h>
 #include "sendto.h"
+#include "ph-config.h"
 
 #if !defined (__GNUC__) || __GNUC__ < 2
 # define __attribute__(x)
@@ -107,6 +108,7 @@ int sendalert (char * record) {
 	/* Set the host running the SMTP server.  LibESMTP has a default port
 	 number of 587, however this is not widely deployed so the port
 	 is specified as 25 along with the default MTA host. */
+	if ( phConfig.MTA != NULL) host = phConfig.MTA;
 	smtp_set_server(session, host ? host : "localhost:25");
 
 	/* Do what's needed at application level to use authentication.
@@ -163,9 +165,13 @@ int sendalert (char * record) {
 //	}
 //	if (nocrlf)
 		strcpy(MyMessage,"");
-		strcat(MyMessage,"Subject: Email from firewall11\r\n");
-		strcat(MyMessage,"To: " SENDTO "\r\n");
-		strcat(MyMessage,"From: dad@firewall11\r\n");
+		strcat(MyMessage,"Subject: ");
+		strcat(MyMessage,phConfig.LastSubject);
+		strcat(MyMessage,"\r\n");
+		strcat(MyMessage,"To: ");
+		strcat(MyMessage,phConfig.LastMailTo);
+		strcat(MyMessage,"\r\n");
+		strcat(MyMessage,"From: root@firewall11\r\n");
 		strcat(MyMessage,"\r\nWarning Will Robinson!!\r\n");
 		// if we have adequate space left in the static buffer, append the audit record to the email text
 		if ( strlen(record) < ( BUFLEN - strlen(MyMessage) - 10 ) ) {
@@ -179,7 +185,7 @@ int sendalert (char * record) {
 	/* Add remaining program arguments as message recipients.
 	 */
 //	while (optind < argc) {
-		recipient = smtp_add_recipient(message, SENDTO);
+		recipient = smtp_add_recipient(message, phConfig.LastMailTo);
 
 		/* Recipient options set here */
 		if (notify != Notify_NOTSET)

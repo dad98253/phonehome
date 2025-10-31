@@ -61,10 +61,15 @@
 #include <math.h>
 #define PHCONFIGMAIN
 #include "ph-config.h"
+#ifdef DEBUG
+#include "debug2.h"
+extern int WinFprintf(FILE *hf, const char * fmt,...);
+#endif	// DEBUG
 //#include "private.h"
 
 
 extern const struct nv_list auparse_ids[];
+extern const struct nv_list auparse_types[];
 extern int IsValidEmail(const char *email);
 
 
@@ -82,32 +87,25 @@ struct nv_pair
 struct kw_pair
 {
 	char *name;
-	int (*parser)(struct nv_pair *, int, ph_config_t *);
+	int (*parser)(struct nv_pair *, int, struct ph_config *);
 	int max_options;
 	int mask;
 };
 
 
-static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
-		const char *file);
+static char *get_line(FILE *f, char *buf, unsigned size, int *lineno, const char *file);
 static int nv_split(char *buf, struct nv_pair *nv);
 static struct kw_pair *kw_lookup(const char *val);
-static int MTA_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int hash_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int key_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int To_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int Subject_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int default_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int filter_parser(struct nv_pair *nv, int line,
-		ph_config_t *config);
-static int format_parser(struct nv_pair *nv, int line, 
-		ph_config_t *config);
+static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int key_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int To_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int default_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int format_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int sanity_check(ph_config_t *config, const char *file);
 static char* valid_keywords( char **string );
 static int nv_deesc(char *buf, char **name, int * name_len, char **ptr);
@@ -117,6 +115,13 @@ static int nv_lookup_name ( const nv_list_t *nv, char * myname );
 static char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 static ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Chain_t * find_chain_end(ph_Chain_t * chain);
+static ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain);
+static ph_Type_Chain_t * TailofTypeChain(ph_Type_Chain_t * phTypeChain);
+static ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int match, char * tempValue, ph_config_t *config);
+ph_Chain_t * TailofFieldChain(ph_Chain_t * phFieldChain);
+void free_chain(ph_Chain_t * chain);
+void free_filterchain(ph_FilterChain_t * chain);
+static int WhitespaceSpan(char* str);
 
 static struct kw_pair keywords[] =
 {
@@ -135,7 +140,7 @@ static const struct nv_list default_arg[] =
 {
   {"pass",		DEFPASS },
   {"reject",	DEFREJECT },
-  { NULL,		0 }
+  { NULL,		NOOPT }
 };
 
 static const struct nv_list filter_arg[] =
@@ -143,7 +148,7 @@ static const struct nv_list filter_arg[] =
   {"pass",		FILPASS },
   {"reject",	FILREJECT },
   {"end",		FILEND },
-  { NULL,		0 }
+  { NULL,		NOOPT }
 };
 
 static const struct nv_list format_arg[] =
@@ -152,14 +157,16 @@ static const struct nv_list format_arg[] =
   {"include",	FORINCLUDE },
   {"exclude",	FOREXCLUDE },
   {"end",		FOREND },
-  { NULL,		0 }
+  { NULL,		NOOPT }
 };
 
 /* The message mmode refers to where informational messages go
    0 - stderr, 1 - syslog, 2 - quiet. The default is quiet. */
 static message_t message_mode = MSG_QUIET;
 static debug_message_t debug_message = DBG_NO;
-static char * defaultMTA = NULL;
+static const char * defaultMTA = MTA_DEFAULT ;
+static const char * defaultMailTo = MAILTO_DEFAULT ;
+static const char * defaultSubject = SUBJECT_DEFAULT ;
 static modes mode = HEADER;
 
 void set_aumessage_mode(message_t mmode, debug_message_t debug)
@@ -194,30 +201,32 @@ void audit_msg(int priority, const char *fmt, ...)
 /*
  * Set everything to its default value
 */
-void clear_phConfig(ph_config_t * phConfig)
+void clear_phConfig(ph_config_t * pphConfig)
 {
 
-	defaultMTA = (char *) malloc ( strlen( MTA_DEFAULT ) + 2 );
-	strcpy( defaultMTA , MTA_DEFAULT );
-	phConfig->MTA = defaultMTA ;
-	phConfig->hashSize = HASH_DEFAULT;
-	phConfig->phKeyConfig = NULL;
-	phConfig->phKeyConfigSize = 0;
-	phConfig->LastMailTo = NULL;
-	phConfig->LastSubject = NULL;
+	pphConfig->MTA = (char *)defaultMTA ;
+	pphConfig->hashSize = HASH_DEFAULT;
+	pphConfig->typehashSize = TYPE_HASH_DEFAULT;
+	pphConfig->fieldhashSize = FIELD_HASH_DEFAULT;
+	pphConfig->phKeyConfig = NULL;
+	pphConfig->phKeyConfigSize = 0;
+	pphConfig->LastMailTo = (char *)defaultMailTo ;
+	pphConfig->LastSubject = (char *)defaultSubject ;
 
 	return;
 }
 
-int load_phConfig(ph_config_t *phConfig, char *file)
+int load_phConfig(struct ph_config *pphConfig, char *file)
 {
-	int fd, rc, lineno = 1;
+	int fd;
+	int rc;
+	int lineno = 1;
 	struct stat st;
 	FILE *f;
 	char buf[160];
 	char *tmpString;
 
-	clear_phConfig(phConfig);
+	clear_phConfig(pphConfig);
 
 	/* open the file */
 	rc = open(file, O_RDONLY);
@@ -272,10 +281,20 @@ int load_phConfig(ph_config_t *phConfig, char *file)
 
 	SetInputMode ( HEADER );
 	while (get_line(f, buf, sizeof(buf), &lineno, file)) {
+#ifdef DEBUG
+		if(debug) {
+			WinFprintf(fp9, "config line %i: " DBGBOLDYELLOW(%s) "\n",lineno, buf);
+		}
+#endif	// DEBUG
 		// convert line into name-value pair
 		const struct kw_pair *kw;
 		struct nv_pair nv;
 		rc = nv_split(buf, &nv);
+#ifdef DEBUG
+		if(debug) {
+			WinFprintf(fp9, "rc =  " DBGBOLDRED(%i) "\n",rc);
+		}
+#endif	// DEBUG
 		switch (rc) {
 			case 0: // fine
 				break;
@@ -317,7 +336,11 @@ int load_phConfig(ph_config_t *phConfig, char *file)
 			fclose(f);
 			return 1;
 		}
-
+#ifdef DEBUG
+		if(debug) {
+			WinFprintf(fp9, "nv.name, nv.value = " DBGBOLDRED(%s) "," DBGBOLDRED(%s) "\n",nv.name, nv.value);
+		}
+#endif	// DEBUG
 
 		/* identify keyword or error */
 		kw = kw_lookup(nv.name);
@@ -326,12 +349,58 @@ int load_phConfig(ph_config_t *phConfig, char *file)
 				audit_msg(LOG_ERR,
 					"Unknown keyword \"%s\" in line %d of %s",
 					nv.name, lineno, file);
+#ifdef DEBUG
+				if(debug) {
+					WinFprintf(fp9, "Unknown keyword \"" DBGBOLDRED(%s) "\" in line %d of %s\n", nv.name, lineno, file);
+				}
+#endif	// DEBUG
 				fclose(f);
 				return 1;
-			} else {
-				xxxxxxxxxxxxx   process filters and formats here
+			} else {	// in FILTER or FORMAT mode
+#ifdef DEBUG
+				if(debug) {
+					WinFprintf(fp9, "Found potential auparse keyword \"" DBGBOLDRED(%s) "\" in line %d\n", nv.name, lineno);
+				}
+#endif	// DEBUG
+				//////////////////////////////// move this somewhere else?????
+				// check for a match to auditd id names
+#ifdef DEBUG
+				int auid;
+				if(debug) {
+					if ( strcmp(nv.name,"type") == 0 ) {
+	//					recid = nv_lookup_name ( auparse_types, nv.value );
+						auid = -99;
+					} else {
+						auid = nv_lookup_name ( auparse_ids, nv.name );
+					}
+					WinFprintf(fp9, "auparse keyword \"" DBGBOLDRED(%s) "\"'s label id is " DBGBOLDGREEN(%i) " (decimal)\n", nv.name, auid);
+				}
+#endif	// DEBUG
+				switch (mode) {
+					case FILTER:
+						rc = filter_rule_parser(&nv, lineno, pphConfig);
+						break;
+					case FORMAT:
+						rc = format_rule_parser(&nv, lineno, pphConfig);
+						break;
+					default: // something went wrong...
+						audit_msg(LOG_ERR,"Programming error at line %d in %s", __LINE__, __FILE__);
+						rc = -911;
+						break;
+				}
+				if (rc != 0) {
+					fclose(f);
+					return 1; // local parser puts message out
+				}
+////////////////////////////////////////				xxxxxxxxxxxxx   process filters and formats here
+				goto Nextline;
 			}
 		} else { // is this keyword masked?
+#ifdef DEBUG
+			if(debug) {
+				WinFprintf(fp9, "kw->name, kw->mask = " DBGBOLDGREEN(%s) "," DBGBOLDGREEN(%i) "\n",kw->name, kw->mask);
+			}
+#endif	// DEBUG
 			if (kw->mask == 0) {
 				if ( mode != FILTER && mode != FORMAT ) {
 					audit_msg(LOG_ERR,
@@ -354,19 +423,19 @@ int load_phConfig(ph_config_t *phConfig, char *file)
 		}
 
 		/* dispatch to keyword's local parser */
-		rc = kw->parser(&nv, lineno, phConfig);
+		rc = kw->parser(&nv, lineno, pphConfig);
 		if (rc != 0) {
 			fclose(f);
 			return 1; // local parser puts message out
 		}
-
+Nextline:	// if a filter or format definition statement was processed, the logic jumps here
 		lineno++;
 	}
 
 	fclose(f);
-	phConfig->name = strdup(basename(file));
+	pphConfig->name = strdup(basename(file));
 	if (lineno > 1)
-		return sanity_check(phConfig, file);
+		return sanity_check(pphConfig, file);
 	return 0;
 }
 
@@ -416,7 +485,7 @@ static int nv_split(char *buf, struct nv_pair *nv)
 	if ( nv == NULL ) return 5;
 
 	if ( strlen(buf) == 0 ) return 0; // If there's nothing, go to next line
-	if ( strcspn(buf, " ") == strlen(buf) ) return 0; // If it's a all blank line, go to next line
+	if ( (WhitespaceSpan(buf)) == strlen(buf) ) return 0; // If it's a all blank line, go to next line
 	if ( buf[0] == '#' ) return 0; // If there's a comment, go to next line
 
 	int iret = nv_deesc(buf, &(nv->name), &(nv->name_len), &ptr);
@@ -470,7 +539,8 @@ static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	config->MTA = (char *)calloc(1, nv->value_len + 1 + extra);
 	memmove( config->MTA, nv->value , nv->value_len );
     // check for a blank string
-	if ( strcspn(config->MTA, " ") == strlen(config->MTA) ) {
+
+	if ( WhitespaceSpan(config->MTA) == strlen(config->MTA) ) {
     	audit_msg(LOG_ERR, "MTA value %s is blank - line %d", nv->value, line);
     	return 1;
     }
@@ -485,7 +555,7 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
     char *endptr;
     long val;
 
-    str = (char *)calloc(1, nv->value_len + 1);
+    str = nv->value;
     // Handle empty string or string containing only whitespace
     if (str == NULL || *str == '\0') {
     	audit_msg(LOG_ERR, "hash value %s is missing - line %d", nv->value, line);
@@ -525,14 +595,12 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
     	free(str);
     	return 1;
     }
-	free(str);
 
 	// save the integer value
 	config->hashSize = (int)val;
 
 	return 0;
 }
-
 
 static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -597,19 +665,19 @@ static int To_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	SetInputMode(KEY);
 
 	char * tempValue;
-	tempValue = strndup(nv->value, nv->value_len);
+	tempValue = strdup(nv->value);
 
 	if ( IsValidEmail(tempValue) == 0 ) {	// check the syntax of the email address
 		audit_msg(LOG_WARNING, "The email address \"%s\" specified at line %d looks wrong, but it will be used anyway", tempValue, line);
 	}
 
 	// set the last used email in the config struct
-	if ( config->LastMailTo != NULL ) free(config->LastMailTo);
+	if ( config->LastMailTo != NULL && config->LastMailTo != defaultMailTo ) free(config->LastMailTo);
 	config->LastMailTo = tempValue;
 
 	// set it in the current phKeyConfig, too (if one exists)
 	if ( config->phKeyConfig != NULL ) {
-		if ( config->phKeyConfig->MailTo != NULL ) free(config->phKeyConfig->MailTo);
+		if ( config->phKeyConfig->MailTo != NULL && config->phKeyConfig->MailTo != defaultMailTo ) free(config->phKeyConfig->MailTo);
 		config->phKeyConfig->MailTo = strdup(tempValue);
 	}
 
@@ -628,7 +696,7 @@ static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	SetInputMode(KEY);
 
-	tempValue = strndup(nv->value, nv->value_len);
+	tempValue = strdup(nv->value);
 
 	// check for the string "$hostname" if we find it, substitute our hostname
 	if ( (result1 = strstr(tempValue, "$hostname")) != NULL ) {
@@ -650,12 +718,12 @@ static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	}
 
 	// set the last used subject in the config struct
-	if ( config->LastSubject != NULL ) free(config->LastSubject);
+	if ( config->LastSubject != NULL && config->LastSubject != defaultSubject ) free(config->LastSubject);
 	config->LastSubject = tempValue;
 
 	// set it in the current phKeyConfig, too (if one exists)
 	if ( config->phKeyConfig != NULL ) {
-		if ( config->phKeyConfig->Subject != NULL ) free(config->phKeyConfig->Subject);
+		if ( config->phKeyConfig->Subject != NULL && config->phKeyConfig->Subject != defaultSubject ) free(config->phKeyConfig->Subject);
 		config->phKeyConfig->Subject = strdup(tempValue);
 	}
 
@@ -672,11 +740,11 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	SetInputMode(KEY);
 
-	tempValue = strndup(nv->value, nv->value_len);
+	tempValue = strdup(nv->value);
 	// check for an option match
 	int match = nv_lookup_name ( default_arg, tempValue );
 
-	if ( match == 0 ) {
+	if ( match == NOOPT ) {
 		audit_msg(LOG_ERR, "\"%s\" not a valid default option - line %d", tempValue, line);
 		return 0;
 	}
@@ -696,7 +764,7 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
-	ph_Chain_t * TempFilterChain;
+	ph_FilterChain_t * TempFilterChain;
 
 	// if value is blank, there's nothing to do
 	if ( nv->value == NULL ) return 0;
@@ -704,27 +772,28 @@ static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	SetInputMode(FILTER);
 
-	tempValue = strndup(nv->value, nv->value_len);
+	tempValue = strdup(nv->value);
 	// check for an option match
 	int match = nv_lookup_name ( filter_arg, tempValue );
-
-	if ( match == 0 ) {
+	if ( match == NOOPT ) {
 		audit_msg(LOG_ERR, "\"%s\" not a valid filter option - line %d", tempValue, line);
+		free(tempValue);
 		return 0;
 	}
 	free(tempValue);
+	// no filterchain, yet. create one
+	if ( config->phKeyConfig->phFilterChain == NULL ) {
+		TempFilterChain = config->phKeyConfig->phFilterChain = (ph_FilterChain_t *) calloc(sizeof(ph_FilterChain_t), 1);
+	} else {
+		TempFilterChain = find_filterchain_end(config->phKeyConfig->phFilterChain);
+		TempFilterChain->next = (ph_FilterChain_t *) calloc(sizeof(ph_FilterChain_t), 1);
+	}
+	TempFilterChain->TypeHashSize = config->typehashSize;
 
 	if ( match == FILEND ) {
 		// tack wild card pass/reject at the end of the list to iplement the default feature
-		if ( config->phKeyConfig->phFilterChain == NULL ) {
-			// no chain, yet. create one and set the wild card
-			TempFilterChain = config->phKeyConfig->phFilterChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
-		} else {
-			// find the end of the chain
-			TempFilterChain = find_chain_end(config->phKeyConfig->phFilterChain);
-			TempFilterChain->next = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
-			TempFilterChain = TempFilterChain->next;
-		}
+		TempFilterChain->next = (ph_FilterChain_t *) calloc(sizeof(ph_FilterChain_t), 1);
+		TempFilterChain = TempFilterChain->next;
 		TempFilterChain->PassOrReject = config->phKeyConfig->defaultPolicy;
 		TempFilterChain->label = strdup("*");
 		TempFilterChain->value = strdup("*");
@@ -732,6 +801,8 @@ static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		SetInputMode(KEY);
 		return 0;
 	}
+	// must be a pass or reject command: set TempFilterChain
+	TempFilterChain->PassOrReject = match;
 	// set it in the current phKeyConfig, too (if one exists)
 	if ( config->phKeyConfig != NULL ) {
 		config->phKeyConfig->currentPolicy = match;
@@ -754,11 +825,11 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	SetInputMode(FORMAT);
 
-	tempValue = strndup(nv->value, nv->value_len);
+	tempValue = strdup(nv->value);
 	// check for an option match
 	int match = nv_lookup_name ( format_arg, tempValue );
 
-	if ( match == 0 ) {
+	if ( match == NOOPT ) {
 		audit_msg(LOG_ERR, "\"%s\" not a valid format option - line %d", tempValue, line);
 		return 0;
 	}
@@ -797,6 +868,117 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	return 0;
 }
 
+static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config) {
+	char *tempValue;
+	int match;
+	int auid;
+	int i;
+	long long int sum = 0;
+	ph_FilterChain_t * TempFilterChain;
+	ph_Type_Chain_t * TempTypeChain;
+	ph_Chain_t * TempFieldChain;
+	ph_Chain_t * FieldChainTail;
+
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+	tempValue = strdup(nv->value);
+
+	if ( config->phKeyConfig->phFilterChain == NULL ) {
+		audit_msg(LOG_ERR, "\"%s %s\" at line %d appears to be out of order - expecting a \"filter\" directive", nv->name, tempValue, line);
+		free(tempValue);
+		return 0;
+	}
+	// find the current filter chain tail
+	TempFilterChain = find_filterchain_end(config->phKeyConfig->phFilterChain);
+	// check for an record type match
+	if ( strcmp(nv->name,"type") == 0 ) {
+		match  = nv_lookup_name ( auparse_types, tempValue );
+		if ( match == NOOPT ) {
+			audit_msg(LOG_ERR, "\"%s\" not a valid audit record type - line %d", tempValue, line);
+			free(tempValue);
+			return 0;
+		}
+		// create a type filter table entry
+		TempTypeChain = CreatFilterTypeChain (TempFilterChain, match, tempValue, config);
+		TempFilterChain->DefaultTypeChain = TempTypeChain;
+	} else {
+		// must be a non-type field match request
+		// check the name to see if it makes sense
+		if ( ( auid = nv_lookup_name ( auparse_ids, nv->name ) ) == NOOPT ) {
+			audit_msg(LOG_ERR, "Warning: \"%s\" at line %d is an unknown audit field - we will try to match it anyway", nv->name , line);
+		}
+		// check for the special case of "* *" - this wildcard combination should match anything and does not require a record type
+		if ( auid == WILDCARDID && ( strcmp(tempValue,"*") == 0 ) ) {
+			if ( TempFilterChain->DefaultTypeChain == NULL ) {
+				TempFilterChain->DefaultTypeChain = CreatFilterTypeChain (TempFilterChain, auid, tempValue, config);
+			}
+		}
+		// if there is no DefaultTypeChain defined, what record do we apply it to?
+		if ( TempFilterChain->DefaultTypeChain == NULL ) {
+			audit_msg(LOG_ERR, "\"%s %s\" at line %d appears to be defining a field match without first specifying a recored type - it will be ignored", nv->name , tempValue, line);
+			free(tempValue);
+			return 0;
+		}
+		// create a field hash table if one does not exist
+		if ( TempFilterChain->DefaultTypeChain->FieldHashArray == NULL ) {
+			TempFilterChain->DefaultTypeChain->FieldHashArray = (ph_Chain_t **) calloc(sizeof(ph_Chain_t *), TempFilterChain->DefaultTypeChain->FieldHashSize);
+		}
+		// Allocate a new ph_Chain struct
+		TempFieldChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
+		TempFieldChain->label = nv->name;
+		TempFieldChain->Type = auid;
+		TempFieldChain->value = tempValue;
+		// hash the label
+		for ( i = 0; i < strlen(nv->name); i++) {
+			sum+= (unsigned char)( *((nv->name)+i) );
+		}
+		i = sum % TempFilterChain->DefaultTypeChain->FieldHashSize;
+		// Check for collision
+		if ( TempFilterChain->DefaultTypeChain->FieldHashArray[i] != NULL ) {
+			// find the end of the linked list...
+			FieldChainTail = TailofFieldChain(TempFilterChain->DefaultTypeChain->FieldHashArray[i]);
+			FieldChainTail->next = TempFieldChain;
+		} else {
+			TempFilterChain->DefaultTypeChain->FieldHashArray[i] = TempFieldChain;
+		}
+	}
+
+	return 0;
+}
+
+ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int match, char * tempValue, ph_config_t *config) {
+	ph_Type_Chain_t * TempTypeChain;
+	ph_Type_Chain_t * TypeChainTail;
+	int i;
+
+	if ( TempFilterChain->TypeHashArray == NULL ) {
+		TempFilterChain->TypeHashArray = (ph_Type_Chain_t **) calloc(sizeof(ph_Type_Chain_t *), TempFilterChain->TypeHashSize);
+	}
+
+	// Allocate a new ph_Type_Chain struct
+	TempTypeChain = (ph_Type_Chain_t *) calloc(sizeof(ph_Type_Chain_t), 1);
+	TempTypeChain->Name = tempValue;
+	TempTypeChain->Type = match;
+	TempTypeChain->FieldHashSize = config->fieldhashSize;
+
+	// hash the key
+	i = match % TempTypeChain->FieldHashSize;
+	// Check for collision
+	if ( TempFilterChain->TypeHashArray[i] != NULL ) {
+		// find the end of the linked list...
+		TypeChainTail = TailofTypeChain(TempFilterChain->TypeHashArray[i]);
+		TypeChainTail->next = TempTypeChain;
+	} else {
+		TempFilterChain->TypeHashArray[i] = TempTypeChain;
+	}
+	return (TempTypeChain);
+}
+
+
+static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config) {
+	return 0;
+}
 /*
  * This function is where we do the integrated check of the audispd config
  * options. At this point, all fields have been read. Returns 0 if no
@@ -864,6 +1046,21 @@ void free_chain(ph_Chain_t * chain) {
 	return;
 }
 
+void free_filterchain(ph_FilterChain_t * chain) {
+
+	if ( chain->next == NULL ) {
+		return;
+	} else {
+		free_filterchain( chain->next );
+	}
+	free( chain->label );
+	free( chain->value );
+	free ( chain );
+	chain = NULL;
+
+	return;
+}
+
 
 ph_Chain_t * find_chain_end(ph_Chain_t * chain) {
 
@@ -876,6 +1073,16 @@ ph_Chain_t * find_chain_end(ph_Chain_t * chain) {
 }
 
 
+ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain) {
+
+	if ( chain->next == NULL ) {
+		return (chain);
+	} else {
+		return (find_filterchain_end( chain->next ));
+	}
+
+}
+
 void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 
 	if ( phKeyConfig->next == NULL ) {
@@ -885,7 +1092,7 @@ void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 	}
 	free( phKeyConfig->MailTo );
 	free( phKeyConfig->Subject );
-	free_chain( phKeyConfig->phFilterChain );
+	free_filterchain( phKeyConfig->phFilterChain );
 	free_chain( phKeyConfig->phFormatChain );
 	free_chain( phKeyConfig->phFormatMacroChain );
 	free ( phKeyConfig );
@@ -894,16 +1101,16 @@ void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 	return;
 }
 
-void free_phConfig(ph_config_t *phConfig)
+void free_phConfig(ph_config_t *pphConfig)
 {
 
-	if (phConfig == NULL) return;
+	if (pphConfig == NULL) return;
 
-	if ( phConfig->MTA != NULL ) free(phConfig->MTA);
-	if ( phConfig->phKeyConfig != NULL ) free_phKeyConfig( phConfig->phKeyConfig ); // free hash table
-	phConfig->phKeyConfigSize = 0;
-	if ( phConfig->LastMailTo != NULL ) free(phConfig->LastMailTo);
-	if ( phConfig->LastSubject != NULL ) free(phConfig->LastSubject);
+	if ( pphConfig->MTA != NULL ) free(pphConfig->MTA);
+	if ( pphConfig->phKeyConfig != NULL ) free_phKeyConfig( pphConfig->phKeyConfig ); // free hash table
+	pphConfig->phKeyConfigSize = 0;
+	if ( pphConfig->LastMailTo != NULL ) free(pphConfig->LastMailTo);
+	if ( pphConfig->LastSubject != NULL ) free(pphConfig->LastSubject);
 
 	return;
 }
@@ -914,12 +1121,50 @@ static char* valid_keywords( char **string ) {
 	return (*string);
 }
 
+int WhitespaceSpan(char* str) {
+	int iret = 0;
+    if (str == NULL) {
+        return 0;
+    }
+    while (*str != '\0' && isspace((unsigned char)*str)) {
+        str++;
+        iret++;
+    }
+    return iret;
+}
+
+
 static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
+// this function identifies strings enclosed in double quotes as well as escaped characters
+// since all escaped characters start with a "\" (backslash), it is simply removed and the
+// scan starts again after the next character.
+// it then looks for either a whitespace (indicating a field delimiter) or end of string
+// a side effect of this process is that tabs contained within a quoted string will be
+// "de-escaped" and returned as a "t".
+//
+// buf:			the input buffer - it will not be changed
+// name:		the next label field found - a new string will be allocated - ends up in nv.
+// name_len:	the length of the above string - ends up in nv.
+// ptr:			the pointer to the next (unprocessed) character in buf when we are done
+// returns the value of name_len on success, various negative values on errors
+
 	int fldlen = 0;
 	char * strStart;
 	char * tmptr;
+	int isizews;
+	int lensubstr;
 
-	strcpy(buf, buf+strcspn(buf, " ")); // skip all preceding blanks /////////////////  need to use memmove???...
+	if ( (isizews = WhitespaceSpan(buf)) == strlen(buf) ) {
+		// all whitespace - zero len buf .. should be impossible
+		*buf = '\000';
+	} else {
+		if ( isizews ) {
+			// move non white to front of string
+			lensubstr = strlen(buf+isizews);
+			memmove(buf, buf+isizews, lensubstr );
+			*(buf+lensubstr) = '\000';
+		}
+	}
 	*ptr = buf;
 	if ( **ptr == '\000' ) return -2;
 
@@ -937,7 +1182,8 @@ static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
 */
 	if ( **ptr == '"' ) {
 		// first character is a double quote, find the matching double quote
-		strStart = (*ptr)++;
+		(*ptr)++;
+		strStart = *ptr;
 		while(1) {
 			if ( (tmptr = strpbrk(*ptr, "\\\"")) == NULL ) return -1;
 			if ( *tmptr == '\"' ) { // matching " found
@@ -951,20 +1197,29 @@ static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
 		// not a quoted string... de-escape it and find the next blank
 		strStart = *ptr;
 		while(1) {
-			if ( (tmptr = strpbrk(*ptr, "\\ ")) == NULL ) { // end of string found
+			if ( (tmptr = strpbrk(*ptr, "\\ \t")) == NULL ) { // end of string found
 				fldlen = strlen(*ptr);
 				break;
 			}
-			if ( *tmptr == ' ' ) { // blank space found
+			if ( *tmptr == ' ' || *tmptr == '\t') { // blank space found
 				fldlen = (int)(tmptr - strStart );
 				break;
 			}
 			*ptr = memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // found a \ .. un-escape it
 		}
 	}
-	*name = strStart;
-	*name_len = fldlen;
 
+	if (fldlen) {
+		*name = (char*)malloc(fldlen+1);	// allocate a string for name (ends up in nv.name)
+		strncpy(*name,strStart,fldlen);
+		*(*name+fldlen) = '\000';
+	} else {
+		*name = (char*)malloc(1);	// allocate a zero length string for name
+		*(*name) = '\000';
+	}
+	*name_len = fldlen;
+	*ptr = (*ptr)+=fldlen;
+	*ptr = *ptr+WhitespaceSpan(*ptr);
 	return fldlen;
 }
 
@@ -1044,11 +1299,11 @@ int nv_lookup_name ( const nv_list_t *nv, char * myname ) {
 	int i = 0;
 
 	while (nv[i].name != NULL) {
-		if (strcasecmp(myname, nv[i].name) == 0) break;
+		if (strcasecmp(myname, nv[i].name) == 0) return (nv[i].option);
 		i++;
 	}
 
-	return (nv[i].option);
+	return (NOOPT);
 }
 
 static char * nv_lookup_option ( const nv_list_t *nv, int myoption ) {
@@ -1068,5 +1323,23 @@ ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs) {
 			return (phKeyConfigs);
 		} else {
 			return ( TailofKeyConfig( phKeyConfigs->next ) );
+		}
+}
+
+ph_Type_Chain_t * TailofTypeChain(ph_Type_Chain_t * phTypeChain) {
+
+		if ( phTypeChain->next == NULL ) {
+			return (phTypeChain);
+		} else {
+			return ( TailofTypeChain( phTypeChain->next ) );
+		}
+}
+
+ph_Chain_t * TailofFieldChain(ph_Chain_t * phFieldChain) {
+
+		if ( phFieldChain->next == NULL ) {
+			return (phFieldChain);
+		} else {
+			return ( TailofFieldChain( phFieldChain->next ) );
 		}
 }

@@ -23,6 +23,11 @@
  * Brian's original code is:
  * Copyright (C) 2001,2002,2021  Brian Stafford <https://libesmtp.github.io/>
  *
+ * Klous' original work is:
+ * Copyright (C) 2007 International Business Machines  Corp.             *
+ * All Rights Reserved.                                                  *
+ *
+ *
  * All modification or enhancements made by John Kuras are:
  * Copyright (c) John kuras 2025
  * All Rights Reserved.
@@ -56,12 +61,18 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  *
+ * License for Klaus' work states is identical to Bian's with the exception
+ *  that it does not reference the gnu url. instead it says:
+ *  "if not, write to the Free Software Foundation, Inc.,
+ *  59 Temple Place - Suite 330, Boston, MA  02111-1307, USA."
+ *
  * License for all modifications made by John Kuras is:
  * DWTFYWWI (Do whatever you want with it)
  *
  * Authors:
  *   Steve Grubb <sgrubb@redhat.com>
  *   Brian Stafford <https://libesmtp.github.io/>
+ *   Klaus Heinrich Kiwi <klausk@br.ibm.com>
  *   John Kuras <w7og@yahoo.com>
  *
  */
@@ -87,6 +98,7 @@
 #ifdef DEBUG
 #include "debug2.h"
 #endif	// DEBUG
+#include "ph-config.h"
 
 static volatile int stop = 0;
 static volatile int hup = 0;
@@ -118,10 +130,16 @@ const char * OuputDeviceType[] = {
         "RAM"
 };
 
+#ifndef DEAFULTCONFIGPATH
+static const char * DefaultConfigPath = "/etc/audit/phonehome.conf" ;	// protection from a bad config.h file...
+#else	// DEAFULTCONFIGPATH
+static const char * DefaultConfigPath = DEAFULTCONFIGPATH ;
+#endif	// DEAFULTCONFIGPATH
+static char * cpath;
+
 static void term_handler( int sig );
 static void hup_handler( int sig );
-static void reload_config(void);
-static int init_syslog(int argc, const char *argv[]);
+static int init_ph(int argc, const char *argv[]);
 static inline void write_syslog(char *s);
 extern int sendalert (char * record);
 #ifdef DEBUG
@@ -142,16 +160,18 @@ int main(int argc, const char *argv[])
 	struct timespec timeout;
 	int iret = 0;
 	int retval = 0;
-	const char *BUILTIN_PATH="/sbin/audisp-af_unix";
-	// initialize the system log routine
-	if (init_syslog(argc, argv)) return EXIT_FAILURE;
+
+	// initialize the phonehome program
+	if (init_ph(argc, argv)) return EXIT_FAILURE;
 #ifdef DEBUG
 	if(debug) {
+		// set send audit_msg to send messages to syslog
+		set_aumessage_mode(MSG_SYSLOG,DBG_YES);
 	    // Open debug file for writing, create if it doesn't exist, and truncate if it does
 	    fd = fopen("/tmp/phdebug.txt", "w");
 	    if (fd == NULL) {
 	    	syslog(LOG_DEBUG, "debug file open failed");
-	        return 1;
+	        return EXIT_FAILURE;
 	    }
 	    fprintf(fd, "phonehome started\n");
 	    lpDebugServerName = "grandma";
@@ -171,28 +191,28 @@ int main(int argc, const char *argv[])
 	iret = sigemptyset(&block_mask);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigemptyset failed for block_mask with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset " DBGBOLDRED(failed) " for block_mask with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
 	iret = sigaddset(&block_mask, SIGHUP);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigaddset failed for SIGHUP with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigaddset " DBGBOLDRED(failed) " for SIGHUP with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
 	iret = sigaddset(&block_mask, SIGTERM);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigaddset failed for SIGTERM with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigaddset " DBGBOLDRED(failed) " for SIGTERM with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
 	if (( iret = sigprocmask(SIG_BLOCK, &block_mask, &old_mask) ) == -1) {
 #ifdef DEBUG
 		if(debug) {
-			WinFprintf(fp9, "sigprocmask failed with %s\n",strerror(errno));
+			WinFprintf(fp9, "sigprocmask " DBGBOLDRED(failed) " with %s\n",strerror(errno));
 		}
 #endif	// DEBUG
-		exit(EXIT_FAILURE);
+		return EXIT_FAILURE;
 	}
 
 	/* Register sighandlers */
@@ -200,7 +220,7 @@ int main(int argc, const char *argv[])
 	iret = sigemptyset(&sa.sa_mask);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigemptyset failed for sa.sa_mask with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset " DBGBOLDRED(failed) " for sa.sa_mask with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
 	/* Set handler for the ones we care about */
@@ -208,14 +228,14 @@ int main(int argc, const char *argv[])
 	iret = sigaction(SIGTERM, &sa, NULL);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigemptyset for SIGTERM failed with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset for SIGTERM " DBGBOLDRED(failed) " with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
 	sa.sa_handler = hup_handler;
 	iret = sigaction(SIGHUP, &sa, NULL);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigemptyset for SIGHUP failed with %s\n",strerror(errno));
+		if (iret) WinFprintf(fp9, "sigemptyset for SIGHUP " DBGBOLDRED(failed) " with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
 #ifdef HAVE_LIBCAP_NG
@@ -228,15 +248,31 @@ int main(int argc, const char *argv[])
     }
 #endif	// DEBUG
 #endif
+    // read the config file
+	if ( load_phConfig(&phConfig, cpath) ) {
+		return EXIT_FAILURE;
+	}
 
+	// start of main loop
 	do {
 		fd_set read_mask;
 		retval = -1;
 
 		/* Load configuration */
 		if (hup) {
-			reload_config();
+#ifdef DEBUG
+			if(debug) {
+				WinFprintf(fp9, DBGBOLDGREEN(reloading config file) "\n");
+			}
+#endif	// DEBUG
+			free_phConfig(&phConfig);
+			if ( load_phConfig(&phConfig, cpath) ) {
+				return EXIT_FAILURE;
+			}
+			hup = 0;
+			sendmail = 0;
 		}
+		// start of select loop
 		do {
 			FD_ZERO(&read_mask);
 			FD_SET(0, &read_mask);
@@ -248,7 +284,7 @@ int main(int argc, const char *argv[])
             iret = sigemptyset(&pselect_mask); // Empty mask means no signals are blocked during pselect
 #ifdef DEBUG
     		if(debug) {
-    			if (iret) WinFprintf(fp9, "sigemptyset failed for pselect_mask with %s\n",strerror(errno));
+    			if (iret) WinFprintf(fp9, "sigemptyset " DBGBOLDRED(failed) " for pselect_mask with %s\n",strerror(errno));
     			WinFprintf(fp9, "calling pselect...\n");
     		}
 #endif	// DEBUG
@@ -256,6 +292,7 @@ int main(int argc, const char *argv[])
 			//retval= select(1, &read_mask, NULL, NULL, &timeout);
     		retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
 		} while (retval == -1 && errno == EINTR && !hup && !stop);
+		// end of select loop
 		if (retval == 0) {
 #ifdef DEBUG
 	    	if(debug) {
@@ -296,6 +333,7 @@ int main(int argc, const char *argv[])
 			break;
 		}
 	} while (stop == 0);
+	// end of main loop
 #ifdef DEBUG
 	if(debug) {
 		WinFprintf(fp9, DBGBOLDRED(stop detected... exiting) "\n");
@@ -305,10 +343,10 @@ int main(int argc, const char *argv[])
 	if (sigprocmask(SIG_SETMASK, &old_mask, NULL) == -1) {
 #ifdef DEBUG
 		if(debug) {
-			WinFprintf(fp9, "sigprocmask restore failed with %s\n",strerror(errno));
+			WinFprintf(fp9, "sigprocmask restore " DBGBOLDRED(failed) " with " DBGBOLDRED(%s) "\n",strerror(errno));
 		}
 #endif	// DEBUG
-	    exit(EXIT_FAILURE);
+	    return EXIT_FAILURE;
 	}
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
@@ -317,7 +355,7 @@ int main(int argc, const char *argv[])
 	debug_close();
 	fclose(fd);
 #endif	// DEBUG
-	return 0;
+	return EXIT_SUCCESS;
 }
 
 
@@ -340,79 +378,42 @@ static void hup_handler( int sig )
         syslog(LOG_INFO, "re-configuring phonehome");
 }
 
-static void reload_config(void)
+static int init_ph(int argc, const char *argv[])
 {
-#ifdef DEBUG
-    if(debug) {
-    	WinFprintf(fp9, DBGBOLDGREEN(reloading config file) "\n");
-    }
-#endif	// DEBUG
-	hup = 0;
-	sendmail = 0;
-}
 
-static int init_syslog(int argc, const char *argv[])
-{
-	int i, facility = LOG_USER;
 	priority = LOG_INFO;
-
-	for (i = 1; i < argc; i++) {
-		if (argv[i]) {
-			if (strcasecmp(argv[i], "LOG_DEBUG") == 0)
-				priority = LOG_DEBUG;
-			else if (strcasecmp(argv[i], "LOG_INFO") == 0)
-				priority = LOG_INFO;
-			else if (strcasecmp(argv[i], "LOG_NOTICE") == 0)
-				priority = LOG_NOTICE;
-			else if (strcasecmp(argv[i], "LOG_WARNING") == 0)
-				priority = LOG_WARNING;
-			else if (strcasecmp(argv[i], "LOG_ERR") == 0)
-				priority = LOG_ERR;
-			else if (strcasecmp(argv[i], "LOG_CRIT") == 0)
-				priority = LOG_CRIT;
-			else if (strcasecmp(argv[i], "LOG_ALERT") == 0)
-				priority = LOG_ALERT;
-			else if (strcasecmp(argv[i], "LOG_EMERG") == 0)
-				priority = LOG_EMERG;
-			else if (strcasecmp(argv[i], "LOG_LOCAL0") == 0)
-				facility = LOG_LOCAL0;
-			else if (strcasecmp(argv[i], "LOG_LOCAL1") == 0)
-				facility = LOG_LOCAL1;
-			else if (strcasecmp(argv[i], "LOG_LOCAL2") == 0)
-				facility = LOG_LOCAL2;
-			else if (strcasecmp(argv[i], "LOG_LOCAL3") == 0)
-				facility = LOG_LOCAL3;
-			else if (strcasecmp(argv[i], "LOG_LOCAL4") == 0)
-				facility = LOG_LOCAL4;
-			else if (strcasecmp(argv[i], "LOG_LOCAL5") == 0)
-				facility = LOG_LOCAL5;
-			else if (strcasecmp(argv[i], "LOG_LOCAL6") == 0)
-				facility = LOG_LOCAL6;
-			else if (strcasecmp(argv[i], "LOG_LOCAL7") == 0)
-				facility = LOG_LOCAL7;
-			else if (strcasecmp(argv[i], "LOG_AUTH") == 0)
-				facility = LOG_AUTH;
-			else if (strcasecmp(argv[i], "LOG_AUTHPRIV") == 0)
-				facility = LOG_AUTHPRIV;
-			else if (strcasecmp(argv[i], "LOG_DAEMON") == 0)
-				facility = LOG_DAEMON;
-			else if (strcasecmp(argv[i], "LOG_SYSLOG") == 0)
-				facility = LOG_SYSLOG;
-			else if (strcasecmp(argv[i], "LOG_USER") == 0)
-				facility = LOG_USER;
-			else if (strcasecmp(argv[i], "interpret") == 0)
-				interpret = 1;
-			else {
-				syslog(LOG_ERR,
-					"Unknown log priority/facility %s",
-					argv[i]);
-				return 1;
-			}
+    /*
+      * the main program accepts a single (optional) argument:
+      * it's configuration file (this is NOT the plugin configuration
+      * usually located at /etc/audit/plugins.d)
+      * We use the default (def_config_file) if no arguments are given
+      */
+	if (argc == 1) {
+		cpath = (char *)DefaultConfigPath;
+		syslog(LOG_WARNING, "No configuration file specified - using default (%s)", cpath);
+	} else if (argc > 1) {
+		cpath = (char *)argv[1];
+		syslog(LOG_INFO, "Using configuration file: %s", cpath);
+	}
+#ifdef DEBUG
+	if (argc > 2) {
+		if ( strcmp((char *)argv[2], "debug") == 0 ) {
+			debug = 1;
+			syslog(LOG_INFO, "Debug option is enabled");
 		}
 	}
+	if (argc > 3) {
+#else	// DEBUG
+	if (argc > 2) {
+#endif	// DEBUG
+		syslog(LOG_ERR, "Error - invalid number of parameters passed. Aborting");
+		return 1;
+	}
+
+	interpret = 1;
 	pid_t mypid = getpid();
 	syslog(LOG_INFO, "plugin starting with pid=%d", mypid);
-	if (facility != LOG_USER) openlog("audispd", 0, facility);
+//	if (facility != LOG_USER) openlog("audispd", 0, facility);
 	return 0;
 }
 
@@ -496,7 +497,7 @@ static inline void write_syslog(char *s)
 		// Record is complete, dump it to debug device
 #ifdef DEBUG
 		if(debug) {
-			WinFprintf(fp9, DBGBOLDCYAN(%s), record);
+			WinFprintf(fp9, DBGBOLDCYAN(%s) "\n", record);
 	    }
 #endif	// DEBUG
 		if (sendmail) {
@@ -529,7 +530,7 @@ void restore_stdin() {
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
 #ifdef DEBUG
     if(debug) {
-    	if (flags == -1) WinFprintf(fp9, "fcntl failed for F_GETFL with %s\n",strerror(errno));
+    	if (flags == -1) WinFprintf(fp9, "fcntl " DBGBOLDRED(failed) " for F_GETFL with %s\n",strerror(errno));
     }
 	int iret;
 	iret =
@@ -537,7 +538,7 @@ void restore_stdin() {
     fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
 #ifdef DEBUG
     if(debug) {
-    	if (iret == -1) WinFprintf(fp9, "fcntl failed for F_SETFL with %s\n",strerror(errno));
+    	if (iret == -1) WinFprintf(fp9, "fcntl " DBGBOLDRED(failed) " for F_SETFL with %s\n",strerror(errno));
     }
 #endif	// DEBUG
 }
