@@ -98,6 +98,8 @@
 #ifdef DEBUG
 #include "debug2.h"
 #endif	// DEBUG
+#define PHMAIN
+#include "phonehome.h"
 #include "ph-config.h"
 
 static volatile int stop = 0;
@@ -139,9 +141,16 @@ static char * cpath;
 
 static void term_handler( int sig );
 static void hup_handler( int sig );
+static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_type, void *user_data);
 static int init_ph(int argc, const char *argv[]);
 static inline void write_syslog(char *s);
+static ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
+static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
+static void dump_whole_event(auparse_state_t *au);
+static void dump_whole_record(auparse_state_t *au);
+static void dump_fields_of_record(auparse_state_t *au);
 extern int sendalert (char * record);
+extern void audit_msg(int priority, const char *fmt, ...);
 #ifdef DEBUG
 extern int debug_init();
 extern void debug_close();
@@ -149,6 +158,8 @@ extern int WinFprintf(FILE *hf, const char * fmt,...);
 extern int OpenDebugDevice(FILE **hp);
 extern int iDebugOutputDevice;
 extern char * lpDebugServerName;
+extern const struct nv_list auparse_types[];
+extern char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 #endif	// DEBUG
 void restore_stdin();
 
@@ -257,8 +268,9 @@ int main(int argc, const char *argv[])
 	do {
 		fd_set read_mask;
 		retval = -1;
+		int read_size = 1; // Set to 1 so it's not EOF
 
-		/* Load configuration */
+		// Load configuration
 		if (hup) {
 #ifdef DEBUG
 			if(debug) {
@@ -276,21 +288,27 @@ int main(int argc, const char *argv[])
 		do {
 			FD_ZERO(&read_mask);
 			FD_SET(0, &read_mask);
-			timeout.tv_sec = 5;  // set the time out Seconds
-			timeout.tv_nsec = 0; // Nanoseconds
-//			timeout.tv_usec = 0; // Microseconds
-            // Prepare sigmask for pselect: temporarily unblock SIGTERM and SIGHUP
             sigset_t pselect_mask;
-            iret = sigemptyset(&pselect_mask); // Empty mask means no signals are blocked during pselect
+			if (auparse_feed_has_data(au)) {
+				timeout.tv_sec = 5;  // set the time out Seconds
+				timeout.tv_nsec = 0; // Nanoseconds
+//				timeout.tv_usec = 0; // Microseconds
+				// Prepare sigmask for pselect: temporarily unblock SIGTERM and SIGHUP
+				iret = sigemptyset(&pselect_mask); // Empty mask means no signals are blocked during pselect
 #ifdef DEBUG
-    		if(debug) {
-    			if (iret) WinFprintf(fp9, "sigemptyset " DBGBOLDRED(failed) " for pselect_mask with %s\n",strerror(errno));
-    			WinFprintf(fp9, "calling pselect...\n");
-    		}
+				if(debug) {
+					if (iret) WinFprintf(fp9, "sigemptyset " DBGBOLDRED(failed) " for pselect_mask with %s\n",strerror(errno));
+					WinFprintf(fp9, "calling pselect...\n");
+				}
 #endif	// DEBUG
-            // Waiting for data on pipe or child exit...
-			//retval= select(1, &read_mask, NULL, NULL, &timeout);
-    		retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
+				// Waiting for data on pipe or child exit...
+				//retval= select(1, &read_mask, NULL, NULL, &timeout);
+				retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
+			} else {
+				retval = pselect(1, &read_mask, NULL, NULL, NULL, &pselect_mask);
+			}
+			// If we timed out & have events, shake them loose
+			if ( retval == 0 && auparse_feed_has_data(au) ) auparse_feed_age_events(au);
 		} while (retval == -1 && errno == EINTR && !hup && !stop);
 		// end of select loop
 		if (retval == 0) {
@@ -314,17 +332,16 @@ int main(int argc, const char *argv[])
 		    		WinFprintf(fp9, "FD_ISSET checks\n");
 		    	}
 #endif	// DEBUG
-				do {
-					if (audit_fgets(tmp, MAX_AUDIT_MESSAGE_LENGTH, 0) > 0) write_syslog(tmp);
-				} while (audit_fgets_more(
-						MAX_AUDIT_MESSAGE_LENGTH));
+				while ( ( read_size = read(0, tmp,  MAX_AUDIT_MESSAGE_LENGTH) ) > 0) {
+					auparse_feed(au, tmp, read_size);
+				}
 			}
 		}
 		if ( retval < 0 && errno != EINTR) {
 			syslog(LOG_ERR, "select failed with %s", strerror(errno));
 			break;
 		}
-		if (audit_fgets_eof()) {
+		if (read_size == 0) {	// EOF
 #ifdef DEBUG
 	    	if(debug) {
 	    		WinFprintf(fp9, DBGBOLDRED(eof detected) "\n");
@@ -348,6 +365,9 @@ int main(int argc, const char *argv[])
 #endif	// DEBUG
 	    return EXIT_FAILURE;
 	}
+	// Flush any accumulated events from queue
+	auparse_flush_feed(au);
+	auparse_destroy(au);
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
 	free(record);
@@ -414,6 +434,18 @@ static int init_ph(int argc, const char *argv[])
 	pid_t mypid = getpid();
 	syslog(LOG_INFO, "plugin starting with pid=%d", mypid);
 //	if (facility != LOG_USER) openlog("audispd", 0, facility);
+	au = auparse_init(AUSOURCE_FEED, 0);
+	if (au == NULL) {
+#ifdef DEBUG
+		if(debug) {
+			WinFprintf(fp9, DBGBOLDGREEN(phonehome audit plugin is exiting due to auparse init errors) "\n");
+		}
+#endif	// DEBUG
+		audit_msg(LOG_ERR,"phonehome audit plugin is exiting due to auparse init errors at line %d in %s", __LINE__, __FILE__);
+		return 2;
+	}
+	auparse_set_eoe_timeout(2);
+	auparse_add_callback(au, handle_read_event, NULL, NULL);
 	return 0;
 }
 
@@ -434,9 +466,18 @@ static inline void write_syslog(char *s)
 		if (record == NULL)
 			return;
 
-		auparse_state_t *au = auparse_init(AUSOURCE_BUFFER, s);
-		if (au == NULL)
+		au = auparse_init(AUSOURCE_BUFFER, s);
+		if (au == NULL) {
+#ifdef DEBUG
+			if(debug) {
+				WinFprintf(fp9, DBGBOLDGREEN(phonehome audit plugin is exiting due to auparse init errors) "\n");
+			}
+#endif	// DEBUG
+			audit_msg(LOG_ERR,"phonehome audit plugin is exiting due to auparse init errors at line %d in %s", __LINE__, __FILE__);
 			return;
+		}
+		auparse_set_eoe_timeout(2);
+		auparse_add_callback(au, handle_read_event, NULL, NULL);
 		rc = auparse_first_record(au);
 
 		// AUDIT_EOE has no fields - drop it
@@ -543,4 +584,215 @@ void restore_stdin() {
 #endif	// DEBUG
 }
 
+#ifdef DEBUG
+// This function dumps a whole event by iterating over records
+static void dump_whole_event(auparse_state_t *au)
+{
+	auparse_first_record(au);
+	do {
+		WinFprintf(fp9, DBGBOLDCYAN(%s) "\n", auparse_get_record_text(au));
+		dump_fields_of_record(au);
+	} while (auparse_next_record(au) > 0);
+}
 
+// This function dumps a whole record's text
+static void dump_whole_record(auparse_state_t *au)
+{
+	WinFprintf(fp9, DBGBOLDGREEN(%s) ": " DBGBOLDCYAN(%s) "\n", auparse_get_type_name(au), auparse_get_record_text(au));
+}
+
+// This function iterates through the fields of a record
+// and print its name and raw value and interpreted value.
+static void dump_fields_of_record(auparse_state_t *au)
+{
+	WinFprintf(fp9, DBGBOLDGREEN(record type) " " DBGBOLDBLACK(%d(%s)) " has " DBGBOLDBLACK(%d) " fields\n", auparse_get_type(au), auparse_get_type_name(au), auparse_get_num_fields(au));
+	WinFprintf(fp9, DBGBOLDBLACK(line=%d file=%s) "\n", auparse_get_line_number(au), auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
+	const au_event_t *e = auparse_get_timestamp(au);
+	if (e == NULL) {
+		WinFprintf(fp9, DBGBOLDRED(Error getting time stamp - aborting) "\n");
+		return;
+	}
+	/* Note that e->sec can be treated as time_t data if you want
+	 * something a little more readable */
+	WinFprintf(fp9, DBGBOLDRED(event time:) " " DBGBOLDGREEN(%u.%u:%lu) ", " DBGBOLDYELLOW(host) "=" DBGBOLDCYAN(%s) "\n", (unsigned)e->sec,
+		e->milli, e->serial, e->host ? e->host : "?");
+		auparse_first_field(au);
+
+	do {
+		WinFprintf(fp9, DBGBOLDCYAN(field:) " " DBGBOLDGREEN(%s) "=" DBGBOLDYELLOW(%s) " (%s)\n",auparse_get_field_name(au),auparse_get_field_str(au),auparse_interpret_field(au));
+	} while (auparse_next_field(au) > 0);
+}
+#endif	// DEBUG
+// This function receives a single complete event at a time from the auparse library.
+static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_type, void *user_data)
+{
+	int type;
+	int num=0;
+	int iret;
+	int ftype;
+	int i;
+	int matches;
+	unsigned long long int sum;
+	const char *fname;
+	const char *fval;
+	unsigned int numfields;
+	ph_KeyConfig_t * tempKeyConf;
+	ph_FilterChain_t * tempFilterChain;
+	ph_Type_Chain_t * tempTypeChain;
+	ph_Chain_t * TempFieldChain;
+
+	if (cb_event_type != AUPARSE_CB_EVENT_READY) return;
+#ifdef DEBUG
+	if ( debug ) dump_whole_event(au);
+#endif	// DEBUG
+	// go to the first record in the event
+	iret = auparse_first_record(au);
+	if ( iret < 1 ) {
+		// no records... bye!
+//		auparse_destroy(au);
+		return;
+	}
+	// AUDIT_EOE has no fields - drop it
+	if ( ( numfields = auparse_get_num_fields(au) ) == 0) {
+//		auparse_destroy(au);
+		return;
+	}
+	// locate the event key field
+	// for now we only will look in the first record - in audit.log, the key appears to
+	// always be on the first record
+	do {
+		ftype = auparse_get_field_type(au);
+#ifdef DEBUG
+		fname = auparse_get_field_name(au);
+#endif	// DEBUG
+		if ( ftype == AUPARSE_TYPE_ESCAPED_KEY ) break;
+	} while ( auparse_next_field(au) > 0 );
+	if ( ftype != AUPARSE_TYPE_ESCAPED_KEY ) return; // no key field found
+	fval = auparse_interpret_field(au);
+	for ( i = 0; i < strlen(fval); i++) {
+		sum+= (unsigned char)( *(fval+i) );
+	}
+	i = sum & phConfig.hashmask;
+	// Check for collision
+#ifdef DEBUG
+    if(debug) {
+    	if (phKeyConfigs == NULL) WinFprintf(fp9, DBGBOLDRED(phKeyConfigs not initialized) " at %d in %s\n",__LINE__,__FILE__);
+    }
+#endif	// DEBUG
+	if ( phKeyConfigs[i] == NULL ) return; // not in hash table
+	// hmmm... something is there, lets see if it's a match
+	tempKeyConf = phKeyConfigs[i];
+	while (1) {
+		if ( strcmp (tempKeyConf->key, fval) == 0 ) break;
+		if ( tempKeyConf->next == NULL ) return;
+		tempKeyConf = tempKeyConf->next;
+	}
+#ifdef DEBUG
+	if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
+#endif	// DEBUG
+// key matches: check the filters for this key...
+	if ( (tempFilterChain = tempKeyConf->phFilterChain) != NULL ) {
+		do {
+			// rewind to the first record
+			auparse_first_record(au);
+			// check each record to see if it is in the filter's record type hash
+			// hash the key
+			matches = 1;
+			do {
+				type = auparse_get_type(au);
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, DBGBOLDYELLOW(record type:) " " DBGBOLDMAGENTA(%s) " (%i=%s)\n",auparse_get_type_name(au),auparse_get_type(au),nv_lookup_option(auparse_types,auparse_get_type(au)));
+#endif	// DEBUG
+				if ( tempFilterChain->TypeHashArray == NULL ) continue;	// no TypeHashArray implies all types match
+				i = type % tempFilterChain->TypeHashSize;
+				tempTypeChain = tempFilterChain->TypeHashArray[i];
+				if ( ( tempTypeChain = CheckTypeChain(tempTypeChain, type) ) == NULL ) continue; // no match read the next record
+				// the type matches, tempTypeChain will now be pointing to the matching stuct; check for field matches
+				if ( tempTypeChain->FieldHashArray == NULL ) continue; // no fields specified on this type record in our filter... move on
+				auparse_first_field(au);
+				do {
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, DBGBOLDCYAN(field:) " " DBGBOLDGREEN(%s) "=" DBGBOLDYELLOW(%s) " (%s)\n",auparse_get_field_name(au),auparse_get_field_str(au),auparse_interpret_field(au));
+#endif	// DEBUG
+					fname = auparse_get_field_name(au);
+					sum = 0;
+					for ( i = 0; i < strlen(fname); i++) {
+						sum+= (unsigned char)( *(fname+i) );
+					}
+					i = sum % tempTypeChain->FieldHashSize;
+					// Check for collision
+					TempFieldChain = tempTypeChain->FieldHashArray[i];
+					if ( ( TempFieldChain = CheckFieldChain(TempFieldChain, fname) ) == NULL ) continue; // no match on label, check the next field
+					// check if the value matches
+					if ( strcmp(TempFieldChain->value, auparse_get_field_str(au)) == 0 ) continue; // value matches - we are still good!
+					matches = 0; // oops, this value does not match - filter fails to match...
+					break;
+				} while ( auparse_next_field(au) > 0 );
+			} while (auparse_next_record(au) > 0 && matches);
+////////////////////////////////////////////////////////////////////////////////xxx
+		} while ( ( tempFilterChain = tempFilterChain->next ) != NULL );
+	}
+
+
+
+
+	// Loop through the records in the event looking for one to process.
+	while (auparse_goto_record_num(au, num) > 0) {
+		type = auparse_get_type(au);
+		// Now branch based on what record type is found.
+		switch (type) {
+			case AUDIT_AVC:
+				dump_fields_of_record(au);
+				break;
+			case AUDIT_SYSCALL:
+				dump_whole_record(au);
+				break;
+			case AUDIT_CONFIG_CHANGE:
+				dump_whole_record(au);
+				break;
+			case AUDIT_PROCTITLE:
+				dump_whole_record(au);
+				break;
+			case AUDIT_CWD:
+				dump_whole_record(au);
+				break;
+			case AUDIT_PATH:
+				dump_whole_record(au);
+				break;
+			case AUDIT_USER_LOGIN:
+				break;
+			case AUDIT_ANOM_ABEND:
+				break;
+			case AUDIT_MAC_STATUS:
+				dump_whole_event(au);
+				break;
+			default:
+				printf("unknown record type = %i\n",type);
+				dump_whole_record(au);
+				break;
+		}
+		num++;
+	}
+}
+
+ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type) {
+
+	if ( phTypeChain == NULL ) return (NULL);
+	if (phTypeChain->Type == type) return phTypeChain;
+	if ( phTypeChain->next == NULL ) {
+		return (NULL);
+	} else {
+		return ( CheckTypeChain( phTypeChain->next , type) );
+	}
+}
+
+ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label) {
+
+	if ( phFieldChain == NULL ) return (NULL);
+	if ( strcmp (phFieldChain->label, label) == 0 ) return phFieldChain;
+	if ( phFieldChain->next == NULL ) {
+		return (NULL);
+	} else {
+		return ( CheckFieldChain( phFieldChain->next , label) );
+	}
+}

@@ -106,8 +106,12 @@ typedef struct ph_config
 	unsigned long int hashmask;
 	int		typehashSize;
 	int		fieldhashSize;
-	struct	ph_KeyConfig * phKeyConfig;
-	struct	ph_FilterChain * CurrentFilterChain;
+	struct	ph_KeyConfig * phKeyConfig;		// a temporary pointer used during config input processing
+	struct	ph_Type_Chain * TempTypeChain;	// a temporary pointer used during config input processing
+	struct	ph_KeyConfig * statusKeyConfigHead;		// helpful link for cleanup
+	struct	ph_Type_Chain * StatusTypeChainHead;	// helpful link for cleanup
+	struct	ph_Chain * StatusFieldChainHead;		// helpful link for cleanup
+	struct	ph_FilterChain * CurrentFilterChain;	// a temporary pointer used during config input processing
 	int		phKeyConfigSize;
 	char *	LastMailTo;
 	char *	LastSubject;
@@ -126,6 +130,7 @@ typedef struct ph_KeyConfig
 	struct	ph_Chain * phFormatChain;
 	struct	ph_Chain * phFormatMacroChain;
 	struct	ph_KeyConfig * next;
+	struct	ph_KeyConfig * statusKeyConfigNext;	// helpful link for cleanup
 } ph_KeyConfig_t;
 
 typedef struct ph_FilterChain
@@ -134,7 +139,9 @@ typedef struct ph_FilterChain
 	char *	value;	// ??
 	int		PassOrReject;
 	int		TypeHashSize;
-	struct	ph_Type_Chain * DefaultTypeChain;
+	struct	ph_Type_Chain * DefaultTypeChain;		// (optional) if field filters are
+													// defined prior to a record type
+													// definition, they are saved here
 	struct	ph_Type_Chain ** TypeHashArray;
 	struct	ph_FilterChain * next;
 } ph_FilterChain_t;
@@ -150,6 +157,7 @@ typedef struct ph_Type_Chain
 	int		FieldHashSize;
 	struct	ph_Chain ** FieldHashArray;
 	struct	ph_Type_Chain * next;
+	struct	ph_Type_Chain * StatusTypeChainNext;	// helpful link for cleanup
 } ph_Type_Chain_t;
 
 typedef struct ph_Chain
@@ -160,6 +168,7 @@ typedef struct ph_Chain
 	int		FieldID;
 	int		PassOrReject;
 	struct	ph_Chain * next;
+	struct	ph_Chain * StatusFieldChainNext;	// helpful link for cleanup
 } ph_Chain_t;
 
 typedef struct nv_list
@@ -167,6 +176,24 @@ typedef struct nv_list
 	char *	name;
 	int		option;
 } nv_list_t;
+
+typedef struct nv_pair
+{
+	char *name;
+	char *value;
+	char *option;
+	int name_len;
+	int value_len;
+	int option_len;
+} nv_pair_t;
+
+typedef struct kw_pair
+{
+	char *name;
+	int (*parser)(struct nv_pair *, int, struct ph_config *);
+	int max_options;
+	int mask;
+} kw_pair_t;
 
 typedef enum {
     HEADER,
