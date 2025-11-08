@@ -155,6 +155,8 @@ typedef struct ph_Type_Chain
 	int		Used;	// used during event filtering operation to prevent reuse of
 					// type filters
 					// must always be reset to zero when event evaluation is complete
+	int		matches;	// used during event filtering operation to flag matched record type
+						// must always be reset to zero when event evaluation is complete
 	int		numOfFieldChildren;		// the total number of Field chain structs pointing to this parent
 	int		lengthOfMaskArray;		// the length of the FieldMaskArray array
 	unsigned long long int	*FieldMaskArray;	// used during event filtering operation

@@ -185,7 +185,7 @@ int main(int argc, const char *argv[])
 	        return EXIT_FAILURE;
 	    }
 	    fprintf(fd, "phonehome started\n");
-	    lpDebugServerName = "localhost";
+	    lpDebugServerName = "grandma";
 		debug_init();
 		if ( OpenDebugDevice((FILE**)&fp9) == 0 ) {
 			fprintf(fd,"OpenDebugDevice failed\n");
@@ -313,26 +313,23 @@ int main(int argc, const char *argv[])
 		// end of select loop
 		if (retval == 0) {
 #ifdef DEBUG
-	    	if(debug) {
-	    		WinFprintf(fp9, DBGBOLDRED(Timeout) " occurred.\n");
-	    	}
+	    	if(debug) WinFprintf(fp9, DBGBOLDRED(Timeout) " occurred.\n");
 #endif	// DEBUG
 //		    continue;
 		}
 		/* Now the event loop */
 		 if (!stop && !hup && retval > 0) {
 #ifdef DEBUG
-	    	if(debug) {
-	    		WinFprintf(fp9, "process an event\n");
-	    	}
+	    	if(debug) WinFprintf(fp9, "process an event\n");
 #endif	// DEBUG
 			if (FD_ISSET(0, &read_mask)) {
 #ifdef DEBUG
-		    	if(debug) {
-		    		WinFprintf(fp9, "FD_ISSET checks\n");
-		    	}
+		    	if(debug) WinFprintf(fp9, "FD_ISSET checks\n");
 #endif	// DEBUG
 				while ( ( read_size = read(0, tmp,  MAX_AUDIT_MESSAGE_LENGTH) ) > 0) {
+#ifdef DEBUG
+		    	if(debug) WinFprintf(fp9, DBGBOLDRED(%i) " " DBGBOLDYELLOW(bytes read from stdin) "\n", read_size);
+#endif	// DEBUG
 					auparse_feed(au, tmp, read_size);
 				}
 			}
@@ -343,25 +340,19 @@ int main(int argc, const char *argv[])
 		}
 		if (read_size == 0) {	// EOF
 #ifdef DEBUG
-	    	if(debug) {
-	    		WinFprintf(fp9, DBGBOLDRED(eof detected) "\n");
-	    	}
+	    	if(debug) WinFprintf(fp9, DBGBOLDRED(eof detected) "\n");
 #endif	// DEBUG
 			break;
 		}
 	} while (stop == 0);
 	// end of main loop
 #ifdef DEBUG
-	if(debug) {
-		WinFprintf(fp9, DBGBOLDRED(stop detected... exiting) "\n");
-	}
+	if(debug) WinFprintf(fp9, DBGBOLDRED(stop detected... exiting) "\n");
 #endif	// DEBUG
 	// Restore original signal mask
 	if (sigprocmask(SIG_SETMASK, &old_mask, NULL) == -1) {
 #ifdef DEBUG
-		if(debug) {
-			WinFprintf(fp9, "sigprocmask restore " DBGBOLDRED(failed) " with " DBGBOLDRED(%s) "\n",strerror(errno));
-		}
+		if(debug) WinFprintf(fp9, "sigprocmask restore " DBGBOLDRED(failed) " with " DBGBOLDRED(%s) "\n",strerror(errno));
 #endif	// DEBUG
 	    return EXIT_FAILURE;
 	}
@@ -633,7 +624,6 @@ static void dump_fields_of_record(auparse_state_t *au)
 static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_type, void *user_data)
 {
 	int type;
-	int num=0;
 	int iret;
 	int ftype;
 	int i;
@@ -703,11 +693,13 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 		if ( tempKeyConf->next == NULL ) return;
 		tempKeyConf = tempKeyConf->next;
 	}
+	matches = 0;	// initialize the filter matches flag
 #ifdef DEBUG
 	if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
 #endif	// DEBUG
 // key matches: check the filters for this key...
 	if ( (tempFilterChain = tempKeyConf->phFilterChain) != NULL ) {
+		// for each filter in the chain, do:
 		do {
 			// rewind to the first record
 			auparse_first_record(au);
@@ -716,13 +708,19 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #endif	// DEBUG
 			// check each record to see if it is in the filter's record type hash
 			// hash the key
-			matches = 1;
 			do {
 				type = auparse_get_type(au);
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, DBGBOLDYELLOW(record type:) " " DBGBOLDMAGENTA(%s) " (%i=%s)\n",auparse_get_type_name(au),auparse_get_type(au),nv_lookup_option(auparse_types,auparse_get_type(au)));
 #endif	// DEBUG
-				if ( tempFilterChain->TypeHashArray == NULL ) continue;	// no TypeHashArray implies all types match
+				if ( tempFilterChain->TypeHashArray == NULL ) {
+					// no TypeHashArray implies no types are filtered - the filter matches
+					matches = 1;
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, "there is no Type Hash Array defined for this filter - all events " DBGBOLDGREEN(match) "\n");
+#endif	// DEBUG
+					break;
+				}
 				i = type % tempFilterChain->TypeHashSize;
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, "this record type hashes into " DBGBOLDCYAN(%i) "\n", i);
@@ -730,16 +728,19 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 				tempTypeChain = tempFilterChain->TypeHashArray[i];
 				if ( ( tempTypeChain = CheckTypeChain(tempTypeChain, type) ) == NULL ) {
 #ifdef DEBUG
-					if(debug) WinFprintf(fp9, "no match found for this record type in our hash array\n");
+					if(debug) WinFprintf(fp9, "no match found for this record type in this filter - keep looking\n");
 #endif	// DEBUG
 					continue; // no match read the next record
 				}
-				// the type matches, tempTypeChain will now be pointing to the matching stuct; check for field matches
+				// the type matches, tempTypeChain will now be pointing to the matching stuct
+				tempTypeChain->Used = 1;	// mark it as used ("checked")
+				// check for field matches
 				if ( tempTypeChain->FieldHashArray == NULL ) {
 #ifdef DEBUG
 					if(debug) WinFprintf(fp9, "match found but no fields specified for this record type\n");
 #endif	// DEBUG
-					continue; // no fields specified on this type record in our filter... it matches! - continue checking records
+					tempTypeChain->matches = matches = 1;
+					continue; // no fields specified on this type record in our filter... it matches! - but continue checking records
 				}
 				auparse_first_field(au);
 #ifdef DEBUG
@@ -762,32 +763,52 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 					TempFieldChain = tempTypeChain->FieldHashArray[i];
 					if ( ( TempFieldChain = CheckFieldChain(TempFieldChain, fname) ) == NULL ) {
 #ifdef DEBUG
-						if(debug) WinFprintf(fp9, "no match found for this field name in our hash array\n");
+						if(debug) WinFprintf(fp9, "no match found for this field name in our filter\n");
 #endif	// DEBUG
 						continue; // no match on label, check the next field
 					}
-					// check if the value matches
-					if ( strcmp(TempFieldChain->value, auparse_get_field_str(au)) == 0 ) {
+					// check if the value matches ("*" matches everything)
+					if ( ( strcmp(TempFieldChain->value, auparse_get_field_str(au)) == 0 ) || ( strcmp(TempFieldChain->value, "*") == 0 ) ) {
+						// value matches - set the match bit in the type struct
+						if ( tempTypeChain->MatchMaskArray == NULL ) {
+#ifdef DEBUG
+							if(debug) WinFprintf(fp9, DBGBOLDRED(the MatchMaskArray is missing - this is a programming bug) "\n");
+#endif	// DEBUG
+							return;
+						}
+						(tempTypeChain->FieldMaskArray[TempFieldChain->MatchMaskIndex]) = tempTypeChain->FieldMaskArray[TempFieldChain->MatchMaskIndex] | TempFieldChain->MatchMask;
 #ifdef DEBUG
 						if(debug) WinFprintf(fp9, "the value (" DBGBOLDGREEN(%s) ") matches\n", TempFieldChain->value);
 #endif	// DEBUG
-						continue; // value matches - we are still good!
 					}
-#ifdef DEBUG
-					if(debug) WinFprintf(fp9, "oops, the value of this field (" DBGBOLDGREEN(%s)
-							") does not match what we are looking for (" DBGBOLDRED(%s)
-							") the filter fails to match\n", auparse_get_field_str(au), TempFieldChain->value);
-#endif	// DEBUG
-					matches = 0; // oops, this value does not match - filter fails to match...
-					break;
+					// check the next field
 				} while ( auparse_next_field(au) > 0 );
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, "get next record\n");
 #endif	// DEBUG
 			} while (auparse_next_record(au) > 0 );
-////////////////////////////////////////////////////////////////////////////////xxx
+////////////////////////////////////////////////////////////////////////////////
+			// we're done with this section of the filter chain, let's see if we matched:
+			matches = 1;
+			// check first type in filter
+			tempTypeChain = tempFilterChain->AllTypeChainHead;
+			do {
+				if ( !(tempTypeChain->Used) ) matches = 0;
+				tempTypeChain->Used = 0;
+				if ( ( tempTypeChain->FieldHashArray == NULL ) && !(tempTypeChain->matches) ) matches = 0;
+				tempTypeChain->matches = 0;
+				if ( tempTypeChain->numOfFieldChildren ) {
+					for ( i=0; i<tempTypeChain->lengthOfMaskArray; i++) {
+						if ( tempTypeChain->FieldMaskArray[i] ^ tempTypeChain->MatchMaskArray[i] ) matches = 0;
+						tempTypeChain->FieldMaskArray[i] = 0ull;
+					}
+				}
+			} while (( tempTypeChain = tempTypeChain->AllTypeChainNext ) != NULL);
 			if ( matches ) {
 				// process filter and skip remaining filters
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "filter " DBGBOLDGREEN(matches) "!\n");
+#endif	// DEBUG
 				break;
 			}
 #ifdef DEBUG
@@ -809,10 +830,9 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #endif	// DEBUG
 	}
 
-
-
-
+#ifdef DEBUG
 	// Loop through the records in the event looking for one to process.
+	int num=0;
 	while (auparse_goto_record_num(au, num) > 0) {
 		type = auparse_get_type(au);
 		// Now branch based on what record type is found.
@@ -843,12 +863,15 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 				dump_whole_event(au);
 				break;
 			default:
-				printf("unknown record type = %i\n",type);
+				if(debug) WinFprintf(fp9, DBGBOLDRED(unknown record type = %i) "/n",type);
 				dump_whole_record(au);
 				break;
 		}
 		num++;
 	}
+#endif	// DEBUG
+
+	return;
 }
 
 ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type) {
