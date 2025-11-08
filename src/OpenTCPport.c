@@ -71,8 +71,15 @@ extern int h_errno;
 unsigned int addr;
 char *server_name;
 unsigned short port = DEFAULT_PORT;
+#ifdef USETCP
+int socket_type = SOCK_STREAM;
+#endif
+#ifdef USEUDP
+int socket_type = SOCK_DGRAM;
+#endif
+#if !defined(USETCP) && !defined(USEUDP)
 int socket_type = DEFAULT_PROTO;
-
+#endif
 char * lpDebugServerName = NULL;
 int iDebugServerPort = 0;
 
