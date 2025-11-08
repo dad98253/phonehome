@@ -139,24 +139,38 @@ typedef struct ph_FilterChain
 	char *	value;	// ??
 	int		PassOrReject;
 	int		TypeHashSize;
-	struct	ph_Type_Chain * DefaultTypeChain;		// (optional) if field filters are
-													// defined prior to a record type
-													// definition, they are saved here
+	struct	ph_Type_Chain * DefaultTypeChain;	// (optional) if field filters are
+												// defined prior to a record type
+												// definition, they are saved here
 	struct	ph_Type_Chain ** TypeHashArray;
+	struct	ph_Type_Chain * AllTypeChainHead;	// points to a chain of all Record
+												// Types included in this filter segment
 	struct	ph_FilterChain * next;
 } ph_FilterChain_t;
 
 typedef struct ph_Type_Chain
 {
-	char *	Name;
-	int		Type;
+	char *	Name;	// the user friendly name for the record type
+	int		Type;	// the audit id number used for this type record
 	int		Used;	// used during event filtering operation to prevent reuse of
 					// type filters
 					// must always be reset to zero when event evaluation is complete
-	int		PassOrReject;
-	int		FieldHashSize;
-	struct	ph_Chain ** FieldHashArray;
-	struct	ph_Type_Chain * next;
+	int		numOfFieldChildren;		// the total number of Field chain structs pointing to this parent
+	int		lengthOfMaskArray;		// the length of the FieldMaskArray array
+	unsigned long long int	*FieldMaskArray;	// used during event filtering operation
+												// to keep track of matches to field
+												// elements.
+												// must always be reset to zero when
+												// event evaluation is complete
+	unsigned long long int	*MatchMaskArray;	// referenced during event filtering operation
+												// to quicken match determination. Created
+												// during config input processing
+	int		PassOrReject;		// should be set to the appropriate value from the filter struct
+	int		FieldHashSize;		// should be set to the appropriate value from the config struct
+	struct	ph_Chain ** FieldHashArray;		// hash table used to find field elements
+	struct	ph_Type_Chain * next;	// used to mitigate collisions in the type hash array
+	struct	ph_Type_Chain * AllTypeChainNext;		// points to the next member
+													// of the Type chain for this filter
 	struct	ph_Type_Chain * StatusTypeChainNext;	// helpful link for cleanup
 } ph_Type_Chain_t;
 
@@ -167,6 +181,11 @@ typedef struct ph_Chain
 	char *	value;
 	int		FieldID;
 	int		PassOrReject;
+	int		MatchMaskIndex;		// used in event evaluation to reference the appropriate
+								// match mask back in the type struct
+	unsigned long long int MatchMask;	// the mask used at the above index
+	struct	ph_Type_Chain * ParentTypeRecord;	// used event evaluation to reference
+												// the MatchMaskArray
 	struct	ph_Chain * next;
 	struct	ph_Chain * StatusFieldChainNext;	// helpful link for cleanup
 } ph_Chain_t;

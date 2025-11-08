@@ -185,7 +185,7 @@ int main(int argc, const char *argv[])
 	        return EXIT_FAILURE;
 	    }
 	    fprintf(fd, "phonehome started\n");
-	    lpDebugServerName = "grandma";
+	    lpDebugServerName = "localhost";
 		debug_init();
 		if ( OpenDebugDevice((FILE**)&fp9) == 0 ) {
 			fprintf(fd,"OpenDebugDevice failed\n");
@@ -588,6 +588,8 @@ void restore_stdin() {
 // This function dumps a whole event by iterating over records
 static void dump_whole_event(auparse_state_t *au)
 {
+	WinFprintf(fp9, DBGBOLDCYAN(Dump whole event:) "\n");
+
 	auparse_first_record(au);
 	do {
 		WinFprintf(fp9, DBGBOLDCYAN(%s) "\n", auparse_get_record_text(au));
@@ -598,6 +600,8 @@ static void dump_whole_event(auparse_state_t *au)
 // This function dumps a whole record's text
 static void dump_whole_record(auparse_state_t *au)
 {
+	WinFprintf(fp9, DBGBOLDCYAN(Dump whole record:) "\n");
+
 	WinFprintf(fp9, DBGBOLDGREEN(%s) ": " DBGBOLDCYAN(%s) "\n", auparse_get_type_name(au), auparse_get_record_text(au));
 }
 
@@ -605,7 +609,9 @@ static void dump_whole_record(auparse_state_t *au)
 // and print its name and raw value and interpreted value.
 static void dump_fields_of_record(auparse_state_t *au)
 {
-	WinFprintf(fp9, DBGBOLDGREEN(record type) " " DBGBOLDBLACK(%d(%s)) " has " DBGBOLDBLACK(%d) " fields\n", auparse_get_type(au), auparse_get_type_name(au), auparse_get_num_fields(au));
+	WinFprintf(fp9, DBGBOLDCYAN(Dump fields of record:) "\n");
+
+	WinFprintf(fp9, DBGBOLDGREEN(record type) " " DBGBOLDRED(%d : %s) " has " DBGBOLDCYAN(%d) " fields\n", auparse_get_type(au), auparse_get_type_name(au), auparse_get_num_fields(au));
 	WinFprintf(fp9, DBGBOLDBLACK(line=%d file=%s) "\n", auparse_get_line_number(au), auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
 	const au_event_t *e = auparse_get_timestamp(au);
 	if (e == NULL) {
@@ -632,7 +638,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 	int ftype;
 	int i;
 	int matches;
-	unsigned long long int sum;
+	unsigned long long int sum = 0;
 	const char *fname;
 	const char *fval;
 	unsigned int numfields;
@@ -665,24 +671,34 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #ifdef DEBUG
 		fname = auparse_get_field_name(au);
 #endif	// DEBUG
-		if ( ftype == AUPARSE_TYPE_ESCAPED_KEY ) break;
+		if ( ftype == AUPARSE_TYPE_ESCAPED_KEY ) break;  //////////////////  what if it has multiple key fields?
 	} while ( auparse_next_field(au) > 0 );
 	if ( ftype != AUPARSE_TYPE_ESCAPED_KEY ) return; // no key field found
 	fval = auparse_interpret_field(au);
+	sum = 0;
 	for ( i = 0; i < strlen(fval); i++) {
 		sum+= (unsigned char)( *(fval+i) );
 	}
 	i = sum & phConfig.hashmask;
+#ifdef DEBUG
+    if(debug) WinFprintf(fp9, DBGBOLDRED(key field found:) " " DBGBOLDGREEN(%s) " hashes to: " DBGBOLDCYAN(%i)   "\n", fval, i);
+#endif	// DEBUG
 	// Check for collision
 #ifdef DEBUG
-    if(debug) {
-    	if (phKeyConfigs == NULL) WinFprintf(fp9, DBGBOLDRED(phKeyConfigs not initialized) " at %d in %s\n",__LINE__,__FILE__);
-    }
+    if(debug) if (phKeyConfigs == NULL) WinFprintf(fp9, DBGBOLDRED(phKeyConfigs not initialized) " at %d in %s\n",__LINE__,__FILE__);
 #endif	// DEBUG
-	if ( phKeyConfigs[i] == NULL ) return; // not in hash table
+	if ( phKeyConfigs[i] == NULL ) {
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "hash table location " DBGBOLDCYAN(%i) " is not occupied\n", i);
+#endif	// DEBUG
+		return; // not in hash table
+	}
 	// hmmm... something is there, lets see if it's a match
 	tempKeyConf = phKeyConfigs[i];
 	while (1) {
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "check if " DBGBOLDGREEN(%s) " = " DBGBOLDMAGENTA(%s) "\n", fval, tempKeyConf->key);
+#endif	// DEBUG
 		if ( strcmp (tempKeyConf->key, fval) == 0 ) break;
 		if ( tempKeyConf->next == NULL ) return;
 		tempKeyConf = tempKeyConf->next;
@@ -695,6 +711,9 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 		do {
 			// rewind to the first record
 			auparse_first_record(au);
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, "found a " DBGBOLDMAGENTA(%s %s) " for this key, get first record\n", tempFilterChain->label, tempFilterChain->value);
+#endif	// DEBUG
 			// check each record to see if it is in the filter's record type hash
 			// hash the key
 			matches = 1;
@@ -705,11 +724,27 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #endif	// DEBUG
 				if ( tempFilterChain->TypeHashArray == NULL ) continue;	// no TypeHashArray implies all types match
 				i = type % tempFilterChain->TypeHashSize;
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "this record type hashes into " DBGBOLDCYAN(%i) "\n", i);
+#endif	// DEBUG
 				tempTypeChain = tempFilterChain->TypeHashArray[i];
-				if ( ( tempTypeChain = CheckTypeChain(tempTypeChain, type) ) == NULL ) continue; // no match read the next record
+				if ( ( tempTypeChain = CheckTypeChain(tempTypeChain, type) ) == NULL ) {
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, "no match found for this record type in our hash array\n");
+#endif	// DEBUG
+					continue; // no match read the next record
+				}
 				// the type matches, tempTypeChain will now be pointing to the matching stuct; check for field matches
-				if ( tempTypeChain->FieldHashArray == NULL ) continue; // no fields specified on this type record in our filter... move on
+				if ( tempTypeChain->FieldHashArray == NULL ) {
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, "match found but no fields specified for this record type\n");
+#endif	// DEBUG
+					continue; // no fields specified on this type record in our filter... it matches! - continue checking records
+				}
 				auparse_first_field(au);
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "get first field\n");
+#endif	// DEBUG
 				do {
 #ifdef DEBUG
 					if(debug) WinFprintf(fp9, DBGBOLDCYAN(field:) " " DBGBOLDGREEN(%s) "=" DBGBOLDYELLOW(%s) " (%s)\n",auparse_get_field_name(au),auparse_get_field_str(au),auparse_interpret_field(au));
@@ -720,17 +755,58 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 						sum+= (unsigned char)( *(fname+i) );
 					}
 					i = sum % tempTypeChain->FieldHashSize;
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, "field: " DBGBOLDGREEN(%s) " hashes into " DBGBOLDCYAN(%i) " (%s)\n", fname, i);
+#endif	// DEBUG
 					// Check for collision
 					TempFieldChain = tempTypeChain->FieldHashArray[i];
-					if ( ( TempFieldChain = CheckFieldChain(TempFieldChain, fname) ) == NULL ) continue; // no match on label, check the next field
+					if ( ( TempFieldChain = CheckFieldChain(TempFieldChain, fname) ) == NULL ) {
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, "no match found for this field name in our hash array\n");
+#endif	// DEBUG
+						continue; // no match on label, check the next field
+					}
 					// check if the value matches
-					if ( strcmp(TempFieldChain->value, auparse_get_field_str(au)) == 0 ) continue; // value matches - we are still good!
+					if ( strcmp(TempFieldChain->value, auparse_get_field_str(au)) == 0 ) {
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, "the value (" DBGBOLDGREEN(%s) ") matches\n", TempFieldChain->value);
+#endif	// DEBUG
+						continue; // value matches - we are still good!
+					}
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, "oops, the value of this field (" DBGBOLDGREEN(%s)
+							") does not match what we are looking for (" DBGBOLDRED(%s)
+							") the filter fails to match\n", auparse_get_field_str(au), TempFieldChain->value);
+#endif	// DEBUG
 					matches = 0; // oops, this value does not match - filter fails to match...
 					break;
 				} while ( auparse_next_field(au) > 0 );
-			} while (auparse_next_record(au) > 0 && matches);
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "get next record\n");
+#endif	// DEBUG
+			} while (auparse_next_record(au) > 0 );
 ////////////////////////////////////////////////////////////////////////////////xxx
+			if ( matches ) {
+				// process filter and skip remaining filters
+				break;
+			}
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, "get next filter\n");
+#endif	// DEBUG
 		} while ( ( tempFilterChain = tempFilterChain->next ) != NULL );
+#ifdef DEBUG
+		if(debug) {
+			if (matches) {
+				WinFprintf(fp9, "The filter " DBGBOLDGREEN(matches) " for this event\n");
+			} else {
+				WinFprintf(fp9, "The filter " DBGBOLDRED(fails) " for this event\n");
+			}
+		}
+#endif	// DEBUG
+	} else {
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, DBGBOLDRED(no filter chain found for this key) "/n");
+#endif	// DEBUG
 	}
 
 

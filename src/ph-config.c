@@ -95,6 +95,7 @@ static ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Chain_t * find_chain_end(ph_Chain_t * chain);
 static ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain);
 static ph_Type_Chain_t * TailofTypeChain(ph_Type_Chain_t * phTypeChain);
+static ph_Type_Chain_t * TailofAllTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int match, char * tempValue, ph_config_t *config);
 ph_Chain_t * TailofFieldChain(ph_Chain_t * phFieldChain);
 static ph_KeyConfig_t * TailofStatusKeyConfig(ph_KeyConfig_t * phKeyConfigs);
@@ -657,6 +658,12 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	tempKeyConfig->defaultPolicy = -1;
 	tempKeyConfig->currentPolicy = -1;
 	tempKeyConfig->currentFormat = -1;
+	// add the new key struct to the linked list for all key structs
+	if ( config->statusKeyConfigHead == NULL ) {
+		config->statusKeyConfigHead = tempKeyConfig;
+	} else {
+		TailofStatusKeyConfig(config->statusKeyConfigHead)->statusKeyConfigNext = tempKeyConfig;
+	}
 #ifdef DEBUG
 	if(debug) WinFprintf(fp9, "new phKeyConfig struct created at "DBGBOLDCYAN(%p) " for " DBGBOLDGREEN(%s) "\n",tempKeyConfig, tempKeyConfig->key);
 #endif	// DEBUG
@@ -943,12 +950,12 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	if ( strcmp(nv->name,"type") == 0 ) {
 		match  = nv_lookup_name ( auparse_types, tempValue );
 #ifdef DEBUG
-		if(debug) WinFprintf(fp9, DBGBOLDGREEN(match %s) " found\n", tempValue);
+		if(debug) WinFprintf(fp9, DBGBOLDGREEN(match %s) " found - record type is " DBGBOLDRED(%i) "\n", tempValue, match);
 #endif	// DEBUG
 		if ( match == NOOPT ) {
 			audit_msg(LOG_ERR, "\"%s\" not a valid audit record type - line %d", tempValue, line);
 #ifdef DEBUG
-			if(debug) WinFprintf(fp9, "\"%s\" not a valid audit record type - line %d", tempValue, line);
+			if(debug) WinFprintf(fp9, "\"%s\" not a valid audit record type - line %d\n", tempValue, line);
 #endif	// DEBUG
 			free(tempValue);
 			return 0;
@@ -956,7 +963,6 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		currentRecordType = 1;	// a record type is found. Any field filters that follow apply to this record
 		// create a type filter table entry
 		TempTypeChain = CreatFilterTypeChain (TempFilterChain, match, tempValue, config);
-		TempFilterChain->DefaultTypeChain = TempTypeChain;
 		config->TempTypeChain = TempTypeChain;
 		// make sure that the filterchain
 	} else {
@@ -998,17 +1004,50 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		// create a field hash table if one does not exist
 		if ( TempTypeChain->FieldHashArray == NULL ) {
 #ifdef DEBUG
-			if(debug) WinFprintf(fp9, DBGBOLDRED(FieldHashArray) "created\n");
+			if(debug) WinFprintf(fp9, DBGBOLDRED(FieldHashArray) " created\n");
 #endif	// DEBUG
-			TempTypeChain->FieldHashArray = (ph_Chain_t **) calloc(sizeof(ph_Chain_t *), TempFilterChain->DefaultTypeChain->FieldHashSize);
+			TempTypeChain->FieldHashArray = (ph_Chain_t **) calloc(sizeof(ph_Chain_t *), config->fieldhashSize);
 		}
 		// Allocate a new ph_Chain struct
 		TempFieldChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
 		TempFieldChain->label = nv->name;
 		TempFieldChain->Type = auid;
 		TempFieldChain->value = tempValue;
+		TempFieldChain->ParentTypeRecord = TempTypeChain; // link to the parent type record
+		// add the new field struct to the linked list for all field structs
+		if ( config->StatusFieldChainHead == NULL ) {
+			config->StatusFieldChainHead = TempFieldChain;
+		} else {
+			TailofStatusFieldChain(config->StatusFieldChainHead)->StatusFieldChainNext = TempFieldChain;
+		}
+		// re-calculate the field mask for the parent type struct to include our new field struct
+		// get the total number of fields under the parent type struct - this is the mask bit index for our field
+		int FieldSeqNum = TempTypeChain->numOfFieldChildren;
+		(TempTypeChain->numOfFieldChildren)++;	// increment the field count in the parent type struct
+		TempFieldChain->MatchMask = 1ull << ( FieldSeqNum % 64 );
+		TempFieldChain->MatchMaskIndex = FieldSeqNum / 64;
+		// make sure the parent's MaskArray is big enough
+		if ( TempTypeChain->MatchMaskArray == NULL ) {
+			// no MaskArray, make it length 1
+			TempTypeChain->MatchMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), 1);
+			TempTypeChain->FieldMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), 1);
+			TempTypeChain->lengthOfMaskArray = 1;
+		}
+		if ( TempTypeChain->lengthOfMaskArray < (TempFieldChain->MatchMaskIndex + 1) ) {
+			// we need to make the MaskArray bigger
+			unsigned long long int	* OldMaskArray = TempTypeChain->MatchMaskArray;
+			TempTypeChain->MatchMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), TempFieldChain->MatchMaskIndex + 1);
+			for (i=0; i<TempTypeChain->lengthOfMaskArray; i++) {
+				TempTypeChain->MatchMaskArray[i] = OldMaskArray[i];
+			}
+			free(OldMaskArray);
+			free(TempTypeChain->FieldMaskArray); // FieldMaskArray should always be all zeros - just free it & make new one
+			TempTypeChain->FieldMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), TempFieldChain->MatchMaskIndex + 1);
+		}
+		// or our new MatchMask into the parent's MatchMaskArray
+		(TempTypeChain->MatchMaskArray[TempFieldChain->MatchMaskIndex]) = TempTypeChain->MatchMaskArray[TempFieldChain->MatchMaskIndex] | TempFieldChain->MatchMask;
 #ifdef DEBUG
-		if(debug) WinFprintf(fp9, "field filter " DBGBOLDRED(%s:%s) " created, auid = " DBGBOLDGREEN(%i)  "\n", TempFieldChain->label, TempFieldChain->value, TempFieldChain->Type);
+		if(debug) WinFprintf(fp9, "field filter " DBGBOLDRED(%s=%s) " created, auid = " DBGBOLDGREEN(%i)  "\n", TempFieldChain->label, TempFieldChain->value, TempFieldChain->Type);
 #endif	// DEBUG
 		// hash the label
 		for ( i = 0; i < strlen(nv->name); i++) {
@@ -1049,6 +1088,18 @@ ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int 
 	TempTypeChain->Name = tempValue;
 	TempTypeChain->Type = match;
 	TempTypeChain->FieldHashSize = config->fieldhashSize;
+	// add the new type struct to the linked list for this filter
+	if ( TempFilterChain->AllTypeChainHead == NULL ) {
+		TempFilterChain->AllTypeChainHead = TempTypeChain;
+	} else {
+		TailofAllTypeChain(TempFilterChain->AllTypeChainHead)->AllTypeChainNext = TempTypeChain;
+	}
+	// add the new type struct to the linked list for all type structs
+	if ( config->StatusTypeChainHead == NULL ) {
+		config->StatusTypeChainHead = TempTypeChain;
+	} else {
+		TailofStatusTypeChain(config->StatusTypeChainHead)->StatusTypeChainNext = TempTypeChain;
+	}
 #ifdef DEBUG
 	if(debug) WinFprintf(fp9, "new TypeChain struct created at " DBGBOLDCYAN(%p) " for " DBGBOLDGREEN(%s) "\n",TempTypeChain, tempValue);
 #endif	// DEBUG
@@ -1456,6 +1507,15 @@ ph_Type_Chain_t * TailofStatusTypeChain(ph_Type_Chain_t * phTypeChain) {
 		}
 }
 
+ph_Type_Chain_t * TailofAllTypeChain(ph_Type_Chain_t * phTypeChain) {
+
+		if ( phTypeChain->AllTypeChainNext == NULL ) {
+			return (phTypeChain);
+		} else {
+			return ( TailofAllTypeChain( phTypeChain->AllTypeChainNext ) );
+		}
+}
+
 ph_Chain_t * TailofFieldChain(ph_Chain_t * phFieldChain) {
 
 		if ( phFieldChain->next == NULL ) {
@@ -1493,7 +1553,7 @@ void DumpKeyHashArray( char * t1, char * title, ph_KeyConfig_t ** KeyHashArray, 
 		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": (zero element array)\n", t1, title);
 		return;
 	}
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":\n", t1, title);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, KeyHashArray );
 	char * tempstr = (char *) calloc(strlen(title) + 50, 1);
 	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
 	strcpy(tempstr2, t1);
@@ -1506,7 +1566,11 @@ void DumpKeyHashArray( char * t1, char * title, ph_KeyConfig_t ** KeyHashArray, 
 		DumpKeyConfigNext( tempstr2, tempstr,  KeyHashArray[i]);
 		found++;
 	}
-	if ( !found ) WinFprintf(fp9, DBGBOLDRED(-- no entries --) "\n");
+	if ( !found ) {
+		WinFprintf(fp9, DBGBOLDRED(-- no key hash entries --) "\n");
+	} else {
+		WinFprintf(fp9, DBGBOLDRED(-- %i key hash entries --) "\n", found);
+	}
 	WinFprintf(fp9, "\n");
 	free(tempstr);
 	free(tempstr2);
@@ -1541,7 +1605,7 @@ void DumpKeyConfig( char * t1, char * title, ph_KeyConfig_t * KeyConfig) {
 	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
 	strcpy(tempstr2, t1);
 	strcat(tempstr2,"\t");
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":\n", t1, title);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, KeyConfig );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->key) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->key) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MailTo) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->MailTo) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Subject) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->Subject) );
@@ -1576,7 +1640,7 @@ void DumpConfig( char * t1, char * title, ph_config_t * Config) {
 	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
 	strcpy(tempstr2, t1);
 	strcat(tempstr2,"\t");
-	WinFprintf(fp9, "%s%s:\n", t1, title);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, Config );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s->name) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->name) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s->MTA) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->MTA) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s->hashSize) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->hashSize);
@@ -1586,6 +1650,7 @@ void DumpConfig( char * t1, char * title, ph_config_t * Config) {
 	strcpy(tempstr, title);
 	strcat(tempstr,"->phKeyConfig");
 	DumpKeyConfig( tempstr2, tempstr, Config->phKeyConfig);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->TempTypeChain) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->TempTypeChain) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->statusKeyConfigHead) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->statusKeyConfigHead) );
 //	strcpy(tempstr, title);
 //	strcat(tempstr,"->statusKeyConfigHead");
@@ -1638,7 +1703,7 @@ void DumpFilterChain( char * t1, char * title, ph_FilterChain_t * Config){
 	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
 	strcpy(tempstr2, t1);
 	strcat(tempstr2,"\t");
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":\n", t1, title);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, Config );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->label) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->label) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->value) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->value) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->PassOrReject) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->PassOrReject);
@@ -1647,8 +1712,9 @@ void DumpFilterChain( char * t1, char * title, ph_FilterChain_t * Config){
 	strcat(tempstr, DBGBOLDGREEN(->DefaultTypeChain) );
 	DumpTypeChainNext( tempstr2, tempstr,  Config->DefaultTypeChain);
 	strcpy(tempstr, title);
-	strcat(tempstr, DBGBOLDGREEN(->phFilterChain) );
+	strcat(tempstr, DBGBOLDGREEN(->TypeHashArray) );
 	DumpTypeChainHashArray( tempstr2, tempstr,  Config->TypeHashArray, phConfig.typehashSize);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->AllTypeChainHead) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->AllTypeChainHead) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->next) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->next) );
 
 	free(tempstr);
@@ -1765,16 +1831,26 @@ void DumpTypeChain( char * t1, char * title, ph_Type_Chain_t * Config){
 	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
 	strcpy(tempstr2, t1);
 	strcat(tempstr2,"\t");
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":\n", t1, title);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, Config );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Name) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->Name) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Type) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->Type);
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Used) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->Used);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->lengthOfMaskArray) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->lengthOfMaskArray);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->FieldMaskArray) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->FieldMaskArray) );
+	if ( Config->MatchMaskArray == NULL ) {
+		WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MatchMaskArray) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->MatchMaskArray) );
+	} else {
+		for (int i=0; i<Config->lengthOfMaskArray; i++) {
+			WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MatchMaskArray) "[%i]; \t" DBGBOLDYELLOW(0x%016llx) "\n", t1, title, i, (void *)(Config->MatchMaskArray[i]) );
+		}
+	}
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->PassOrReject) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->PassOrReject);
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->FieldHashSize) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->FieldHashSize);
 	strcpy(tempstr, title);
 	strcat(tempstr, DBGBOLDGREEN(->FieldHashArray) );
 	DumpFieldChainHashArray( tempstr2, tempstr,  Config->FieldHashArray, phConfig.fieldhashSize);
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->next) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->next) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->AllTypeChainNext) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->AllTypeChainNext) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->StatusTypeChainNext) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->StatusTypeChainNext) );
 
 	free(tempstr);
@@ -1793,7 +1869,7 @@ void DumpTypeChainHashArray( char * t1, char * title, ph_Type_Chain_t ** HashArr
 		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": (zero element array)\n", t1, title);
 		return;
 	}
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":\n", t1, title);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, HashArray );
 	char * tempstr = (char *) calloc(strlen(title) + 50, 1);
 	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
 	strcpy(tempstr2, t1);
@@ -1807,7 +1883,11 @@ void DumpTypeChainHashArray( char * t1, char * title, ph_Type_Chain_t ** HashArr
 		DumpTypeChainNext( tempstr2, tempstr,  HashArray[i]);
 		found++;
 	}
-	if ( !found ) WinFprintf(fp9, DBGBOLDRED(-- no entries --) "\n");
+	if ( !found ) {
+		WinFprintf(fp9, "%s" DBGBOLDRED(-- no type chain entries --) "\n", t1);
+	} else {
+		WinFprintf(fp9, "%s" DBGBOLDRED(-- %i type chain entries --) "\n", t1, found);
+	}
 	WinFprintf(fp9, "\n");
 	free(tempstr);
 	free(tempstr2);
@@ -1816,58 +1896,86 @@ void DumpTypeChainHashArray( char * t1, char * title, ph_Type_Chain_t ** HashArr
 
 void DumpFieldChainNext( char * t1, char * title, ph_Chain_t * Config){
 	if( !debug ) return;
-if ( Config == NULL ) {
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);
+	if ( Config == NULL ) {
+		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);
+		return;
+	}
+
+	DumpFieldChain( t1, title,  Config);
+
+	char * tempstr = (char *) calloc(strlen(title) + 50, 1);
+	strcpy(tempstr, title);
+	strcat(tempstr, DBGBOLDGREEN(->next) );
+	DumpFieldChainNext( t1, tempstr,  Config->next);
+	free(tempstr);
+
 	return;
 }
-char * tempstr = (char *) calloc(strlen(title) + 50, 1);
-char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
-strcpy(tempstr2, t1);
-strcat(tempstr2,"\t");
-WinFprintf(fp9, DBGBOLDGREEN(%s%s) " "  DBGBOLDRED(*************  DumpFieldChainNext TBD  *************) ":\n", t1, title);
-
-
-
-free(tempstr);
-free(tempstr2);
-WinFprintf(fp9, "\n");
-return;	}
 
 void DumpFieldChain( char * t1, char * title, ph_Chain_t * Config){
 	if( !debug ) return;
-if ( Config == NULL ) {
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);
+	if ( Config == NULL ) {
+		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);
+		return;
+	}
+	char * tempstr = (char *) calloc(strlen(title) + 50, 1);
+	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
+	strcpy(tempstr2, t1);
+	strcat(tempstr2,"\t");
+
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, Config );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->label) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->label) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Type) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->Type);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->value) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(Config->value) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->FieldID) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->FieldID);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->PassOrReject) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->PassOrReject);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MatchMaskIndex) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, Config->MatchMaskIndex);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MatchMask) "; \t" DBGBOLDYELLOW(0x%016llx) "\n", t1, title, (void *)(Config->MatchMask) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->ParentTypeRecord) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->ParentTypeRecord) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->next) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->next) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->StatusFieldChainNext) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(Config->StatusFieldChainNext) );
+
+	free(tempstr);
+	free(tempstr2);
+	WinFprintf(fp9, "\n");
 	return;
 }
-char * tempstr = (char *) calloc(strlen(title) + 50, 1);
-char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
-strcpy(tempstr2, t1);
-strcat(tempstr2,"\t");
-WinFprintf(fp9, DBGBOLDGREEN(%s%s) " "  DBGBOLDRED(*************  DumpFieldChain TBD  *************) ":\n", t1, title);
-
-
-
-free(tempstr);
-free(tempstr2);
-WinFprintf(fp9, "\n");
-return;	}
 
 void DumpFieldChainHashArray( char * t1, char * title, ph_Chain_t ** HashArray, int LenArray) {
 	if( !debug ) return;
-if ( HashArray == NULL ) {
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);
+	if ( HashArray == NULL ) {
+		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);
+		return;
+	}
+	if ( LenArray < 1 ) {
+		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": (zero element array)\n", t1, title);
+		return;
+	}
+
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) ":" DBGBOLDYELLOW(%p) "\n", t1, title, HashArray );
+	char * tempstr = (char *) calloc(strlen(title) + 50, 1);
+	char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
+	strcpy(tempstr2, t1);
+	strcat(tempstr2,"\t");
+
+	int found = 0;
+	for (int i = 0; i < LenArray; i++) {
+		if ( *(HashArray+i) == NULL ) continue;
+		WinFprintf(fp9, "%shash == " DBGBOLDRED(%i) ":\n", t1, i);
+		snprintf(tempstr, (strlen(title)+48), "%s\[" DBGBOLDRED(%i) "]", title, i);
+		DumpFieldChain( tempstr2, tempstr,  HashArray[i]);
+		found++;
+	}
+	if ( !found ) {
+		WinFprintf(fp9, "%s" DBGBOLDRED(-- no field chain entries --) "\n", t1);
+	} else {
+		WinFprintf(fp9, "%s" DBGBOLDRED(-- %i field chain entries --) "\n", t1, found);
+	}
+	WinFprintf(fp9, "\n");
+	free(tempstr);
+	free(tempstr2);
+
 	return;
+
 }
-char * tempstr = (char *) calloc(strlen(title) + 50, 1);
-char * tempstr2 = (char *) calloc(strlen(t1) + 4, 1);
-strcpy(tempstr2, t1);
-strcat(tempstr2,"\t");
-WinFprintf(fp9, DBGBOLDGREEN(%s%s) " "  DBGBOLDRED(*************  DumpFieldChainHashArray TBD  *************) ":\n", t1, title);
-
-
-
-free(tempstr);
-free(tempstr2);
-WinFprintf(fp9, "\n");
-return;	}
 
