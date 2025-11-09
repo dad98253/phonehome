@@ -1533,7 +1533,7 @@ ph_Chain_t * TailofStatusFieldChain(ph_Chain_t * phFieldChain) {
 			return ( TailofStatusFieldChain( phFieldChain->StatusFieldChainNext ) );
 		}
 }
-
+#ifdef DEBUG
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray ) {
 	if( !debug ) return;
 #ifdef DUMPSTRUCTS
@@ -1979,3 +1979,4 @@ void DumpFieldChainHashArray( char * t1, char * title, ph_Chain_t ** HashArray, 
 
 }
 
+#endif	// DEBUG

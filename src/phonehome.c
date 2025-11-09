@@ -146,9 +146,6 @@ static int init_ph(int argc, const char *argv[]);
 static inline void write_syslog(char *s);
 static ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
 static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
-static void dump_whole_event(auparse_state_t *au);
-static void dump_whole_record(auparse_state_t *au);
-static void dump_fields_of_record(auparse_state_t *au);
 extern int sendalert (char * record);
 extern void audit_msg(int priority, const char *fmt, ...);
 #ifdef DEBUG
@@ -160,6 +157,9 @@ extern int iDebugOutputDevice;
 extern char * lpDebugServerName;
 extern const struct nv_list auparse_types[];
 extern char * nv_lookup_option ( const nv_list_t *nv, int myoption );
+static void dump_whole_event(auparse_state_t *au);
+static void dump_whole_record(auparse_state_t *au);
+static void dump_fields_of_record(auparse_state_t *au);
 #endif	// DEBUG
 void restore_stdin();
 
@@ -628,6 +628,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 	int ftype;
 	int i;
 	int matches;
+	int saved_stdin;
 	unsigned long long int sum = 0;
 	const char *fname;
 	const char *fval;
@@ -807,8 +808,29 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 			if ( matches ) {
 				// process filter and skip remaining filters
 #ifdef DEBUG
-				if(debug) WinFprintf(fp9, "filter " DBGBOLDGREEN(matches) "!\n");
+				if(debug) {
+					WinFprintf(fp9, "filter " DBGBOLDGREEN(matches) "!\n");
+					if ( tempFilterChain->PassOrReject ) {
+						WinFprintf(fp9, DBGBOLDRED(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+					} else {
+						WinFprintf(fp9, DBGBOLDGREEN(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+					}
+				}
 #endif	// DEBUG
+				if ( !(tempFilterChain->PassOrReject) ) {
+					// somewhere deep in the bowls of the estmp library they close stdin and
+					// thus destroy its file descriptor. This will cause our select call in
+					// the main program to fail. The following is a kludge to get around this.
+					auparse_first_record(au);
+					saved_stdin = dup(STDIN_FILENO);
+					// send the email alert
+					sendalert((char *)auparse_get_record_text(au));
+					// restore the stdin descriptor
+					dup2(saved_stdin, STDIN_FILENO);
+					close(saved_stdin);
+					// Now stdin should be restored
+					audit_msg(LOG_INFO, "Event # \"%li\" precipitated a phone home message", auparse_get_serial(au));
+				}
 				break;
 			}
 #ifdef DEBUG
