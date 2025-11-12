@@ -25,8 +25,8 @@ extern int SetUpDebugConsole(void);
 extern int IPSend(char * data, int MaxDataSize);
 extern int ClosePort(void);
 extern short BWError(HWND hwnd, WORD bFlags, WORD quit, WORD id, ...);
-extern int ReAllocateCharVector(unsigned char **p, int length);
-extern void	DumpRamFile(FILE *hp,char **lpHeapFile);
+extern int ReAllocateCharVector(db_heapfile_t *p, int length);
+extern void	DumpRamFile(FILE *hp, db_heapfile_t *lpHeapFile);
 void Replace_ws_With_s(const char * fmt, char * tempstr);
 extern int debugCheckflags(unsigned int debugflag);
 extern char* strjk;
@@ -46,7 +46,7 @@ int iStartOfHeapFile;
 #endif
 
 #ifdef DEBUG
-bool SaveStringInHeap(char **lpHeapFile,char *str);
+bool SaveStringInHeap(db_heapfile_t * lpHeapFile,char *str);
 extern bool StripCSI(char *ci, char *co);
 #endif
 
@@ -67,7 +67,6 @@ FILE *hpfile = NULL;
 
 
 int iDebugOutputDevice = TCPPORT;
-char * lpHeapFile;
 int ColorDebug = 1;
 int debugflag = 0;
 
@@ -239,20 +238,22 @@ int CloseDebugDevice(FILE *hp)
 	return 1;
 }
 
-bool SaveStringInHeap(char **lpHeapFile,char *str)
+bool SaveStringInHeap(db_heapfile_t * lpHeapFile, char *str)
 {
 	int istart;
 	int iend;
 #ifdef DEBUGSAVEINSTRING2
-printf("save \"%s\" *lpHeapFile=(0x%p)\n",str,(void*)*lpHeapFile);
+printf("save \"%s\" *lpHeapFile=(0x%p)\n",str,(void*)lpHeapFile);
 #endif
-	istart = ReAllocateCharVector((unsigned char **)lpHeapFile, 0);
-	if ( istart == 1 ) {
-		**lpHeapFile = '\n';
-		iStartOfHeapFile++;
+	istart = ReAllocateCharVector(lpHeapFile, 0);
+	if ( istart == 0 ) {
+		istart = ReAllocateCharVector(lpHeapFile, 1);
+		lpHeapFile->heapfile[0] = strdup("\n");
+//		**lpHeapFile = '\n';
+		iStartOfHeapFile = 1;
 	}
-	if ( istart < (iStartOfHeapFile + (int)strlen(str) + 2)) {
-		iend   = ReAllocateCharVector((unsigned char **)lpHeapFile, strlen(str)+1 );
+	if ( istart <= iStartOfHeapFile ) {
+	iend = ReAllocateCharVector(lpHeapFile, iStartOfHeapFile - istart + 1 );
 		if (iend == 0) {
 			fprintf(stderr,"realloc failed in SaveStringInHeap\n");
 			return (true);
@@ -261,34 +262,37 @@ printf("save \"%s\" *lpHeapFile=(0x%p)\n",str,(void*)*lpHeapFile);
 #ifdef DEBUGSAVEINSTRING2
 printf("save string at (0x%p)+%i of length %i\n",(void*)*lpHeapFile,istart,(int)strlen(str));
 #endif
-	strcpy(*lpHeapFile+iStartOfHeapFile,str);
-	iend = iStartOfHeapFile + strlen(str);
-	*(*lpHeapFile+iend) = '\000';
-	iStartOfHeapFile+=strlen(str)+1;
+	lpHeapFile->heapfile[iStartOfHeapFile] = strdup(str);
+	iStartOfHeapFile++;
 
 	return (false);
 }
 
-void DumpRamFile(FILE *hp, char **lpHeapFile)
+void DumpRamFile(FILE *hp, db_heapfile_t *lpHeapFile)
 {
 	int istart;
 	int iend;
 
-	if (*lpHeapFile == NULL) return;
+	if (lpHeapFile == NULL) return;
 
 	istart = 1;
-	iend = ReAllocateCharVector((unsigned char **)lpHeapFile, 0);
+	iend = ReAllocateCharVector(lpHeapFile, 0);
 
 	while ( istart < iend )
 	{
-		if (strcmp( ((*lpHeapFile)+istart) , "$e$n$d$o$f$f$i$l$e$" ) == 0 ) goto done;
-		dfprintf(hp, ((*lpHeapFile)+istart) );
-		istart+= ( strlen( (*lpHeapFile)+istart ) + 1 );
+		if (strcmp( lpHeapFile->heapfile[istart] , "$e$n$d$o$f$f$i$l$e$" ) == 0 ) goto done;
+		dfprintf(hp, lpHeapFile->heapfile[istart] );
+		istart++;
 	}
 
 done:
-	free(*lpHeapFile);
-	*lpHeapFile = NULL;
+	for (int i = 0; i < iend; i++) {
+		free(lpHeapFile->heapfile[i]);
+		lpHeapFile->heapfile[i] = NULL;
+	}
+	lpHeapFile->numlines = 0;
+	free(lpHeapFile->heapfile);
+	lpHeapFile->heapfile = NULL;
 
 	return;
 }

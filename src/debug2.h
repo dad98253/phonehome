@@ -67,6 +67,12 @@ EXTERN _CrtMemState heapstate3;
 #include <malloc.h>
 #endif// WINDOZE
 
+typedef struct db_heapfile
+{
+	char **heapfile;
+	int numlines;
+} db_heapfile_t;
+
 // functions
 EXTERN  int debug_init();
 //EXTERN  void load_debug();
@@ -124,6 +130,7 @@ EXTERN unsigned long long int debugstackend INITIZERO;
 #endif	// WINDOZE
 EXTERN unsigned char debugVirbosity INITIZERO;
 EXTERN unsigned char debugInitialVirbosity INITIZERO;
+EXTERN db_heapfile_t lpHeapFile;
 #ifdef DEBUGMAIN
 EXTERN char* sDebugTrueFalse[2] = { (char*)"False" , (char*)"True" };
 #else	// DEBUGMAIN
@@ -149,7 +156,7 @@ EXTERN char* sDebugTrueFalse[2];
 #define DEBUGTUTOR		2
 #define HEAPTRACE1		3
 //#define DEBUGMSGBOX		4		//  see definition in debugflags.h
-#define DEBUGREALLOCATECHAR	5
+//#define DEBUGREALLOCATECHAR	5
 #define DEBUGOPENTCPPORT	6
 #define DEBUGSAVEINSTRING	7
 #define DEBUGDBGPRINTF		8

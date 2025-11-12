@@ -21,6 +21,8 @@ int debug_init()
 	strjk = (char*)malloc(LENTEMPSTR);
 	tmpstrjk = (char*)malloc(LENTEMPSTR);
 	//bOutputDP = bIsStdinTty = isatty(STDIN_FILENO);
+	lpHeapFile.heapfile = NULL;
+	lpHeapFile.numlines = 0;
 	return(0);
 }
 
