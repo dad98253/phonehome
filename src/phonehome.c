@@ -148,6 +148,7 @@ static ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type)
 static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
 extern int sendalert (char * record);
 extern void audit_msg(int priority, const char *fmt, ...);
+extern void NukemAll ( ph_config_t *pphConfig, ph_KeyConfig_t ** phKeyConfigs);
 #ifdef DEBUG
 extern int debug_init();
 extern void debug_close();
@@ -178,17 +179,10 @@ int main(int argc, const char *argv[])
 	if(debug) {
 		// set send audit_msg to send messages to syslog
 		set_aumessage_mode(MSG_SYSLOG,DBG_YES);
-	    // Open debug file for writing, create if it doesn't exist, and truncate if it does
-	    fd = fopen("/tmp/phdebug.txt", "w");
-	    if (fd == NULL) {
-	    	syslog(LOG_DEBUG, "debug file open failed");
-	        return EXIT_FAILURE;
-	    }
-	    fprintf(fd, "phonehome started\n");
 	    lpDebugServerName = "grandma";
 		debug_init();
 		if ( OpenDebugDevice((FILE**)&fp9) == 0 ) {
-			fprintf(fd,"OpenDebugDevice failed\n");
+			syslog(LOG_DEBUG, "OpenDebugDevice failed");
 		} else {
 			WinFprintf(fp9,"\33[1;32mDebug output device set to type %i\33[0m (%s)\n", iDebugOutputDevice,OuputDeviceType[iDebugOutputDevice]);
 		}
@@ -239,14 +233,22 @@ int main(int argc, const char *argv[])
 	iret = sigaction(SIGTERM, &sa, NULL);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigemptyset for SIGTERM " DBGBOLDRED(failed) " with %s\n",strerror(errno));
+		if (iret) {
+			WinFprintf(fp9, "sigemptyset for SIGTERM " DBGBOLDRED(failed) " with %s\n",strerror(errno));
+		} else {
+			WinFprintf(fp9, "\"term_handler\" successfully set as handler for " DBGBOLDGREEN(SIGTERM) "\n");
+		}
 	}
 #endif	// DEBUG
 	sa.sa_handler = hup_handler;
 	iret = sigaction(SIGHUP, &sa, NULL);
 #ifdef DEBUG
 	if(debug) {
-		if (iret) WinFprintf(fp9, "sigemptyset for SIGHUP " DBGBOLDRED(failed) " with %s\n",strerror(errno));
+		if (iret) {
+			WinFprintf(fp9, "sigemptyset for SIGHUP " DBGBOLDRED(failed) " with %s\n",strerror(errno));
+		} else {
+			WinFprintf(fp9, "\"hup_handler\" successfully set as handler for " DBGBOLDGREEN(SIGHUP) "\n");
+		}
 	}
 #endif	// DEBUG
 #ifdef HAVE_LIBCAP_NG
@@ -255,7 +257,11 @@ int main(int argc, const char *argv[])
     iret = capng_apply(CAPNG_SELECT_BOTH);
 #ifdef DEBUG
     if(debug) {
-    	if (iret) WinFprintf(fp9, "capng_apply " DBGBOLDRED(failed) " with %s\n",capngerrors[1-iret]);
+    	if (iret) {
+    		WinFprintf(fp9, "capng_apply " DBGBOLDRED(failed) " with %s\n",capngerrors[1-iret]);
+    	} else {
+    		WinFprintf(fp9, "capng_apply " DBGBOLDRED(CAPNG_SELECT_BOTH) "\n");
+    	}
     }
 #endif	// DEBUG
 #endif
@@ -277,7 +283,7 @@ int main(int argc, const char *argv[])
 				WinFprintf(fp9, DBGBOLDGREEN(reloading config file) "\n");
 			}
 #endif	// DEBUG
-			free_phConfig(&phConfig);
+			NukemAll ( &phConfig, phKeyConfigs);
 			if ( load_phConfig(&phConfig, cpath) ) {
 				return EXIT_FAILURE;
 			}
@@ -362,9 +368,10 @@ int main(int argc, const char *argv[])
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
 	free(record);
+	NukemAll ( &phConfig, phKeyConfigs);
 #ifdef DEBUG
 	debug_close();
-	fclose(fd);
+//	fclose(fd);
 #endif	// DEBUG
 	return EXIT_SUCCESS;
 }
@@ -567,7 +574,7 @@ void restore_stdin() {
 	int iret;
 	iret =
 #endif	// DEBUG
-    fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
+    fcntl(STDIN_FILENO, F_SETFL, flags |= O_NONBLOCK);
 #ifdef DEBUG
     if(debug) {
     	if (iret == -1) WinFprintf(fp9, "fcntl " DBGBOLDRED(failed) " for F_SETFL with %s\n",strerror(errno));
@@ -794,6 +801,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 			// check first type in filter
 			tempTypeChain = tempFilterChain->AllTypeChainHead;
 			do {
+				if ( tempTypeChain == NULL ) break;
 				if ( !(tempTypeChain->Used) ) matches = 0;
 				tempTypeChain->Used = 0;
 				if ( ( tempTypeChain->FieldHashArray == NULL ) && !(tempTypeChain->matches) ) matches = 0;

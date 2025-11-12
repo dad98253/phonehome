@@ -103,6 +103,10 @@ static ph_Type_Chain_t * TailofStatusTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Chain_t * TailofStatusFieldChain(ph_Chain_t * phFieldChain);
 void free_chain(ph_Chain_t * chain);
 void free_filterchain(ph_FilterChain_t * chain);
+void freeStatusFieldChain(ph_Chain_t * chain);
+void freeStatusTypeChain(ph_Type_Chain_t * chain);
+void freeStatusKeyChain(ph_KeyConfig_t * chain);
+void NukemAll ( ph_config_t *pphConfig, ph_KeyConfig_t ** phKeyConfigs);
 static int WhitespaceSpan(char* str);
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray );
 void DumpKeyHashArray( char * t1, char * title, ph_KeyConfig_t ** KeyHashArray, int LenArray);
@@ -225,9 +229,13 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 	int rc;
 	int lineno = 1;
 	struct stat st;
+	const struct kw_pair *kw;
+	struct nv_pair nv;
 	FILE *f;
 	char buf[160];
 	char *tmpString;
+
+	syslog(LOG_INFO, "loading config file");
 
 	clear_phConfig(pphConfig);
 
@@ -288,8 +296,9 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		if(debug) WinFprintf(fp9, "config line %i: " DBGBOLDYELLOW(%s) "\n",lineno, buf);
 #endif	// DEBUG
 		// convert line into name-value pair
-		const struct kw_pair *kw;
-		struct nv_pair nv;
+		nv.name = NULL;
+		nv.value = NULL;
+		nv.option = NULL;
 		rc = nv_split(buf, &nv);
 #ifdef DEBUG
 		if(debug) WinFprintf(fp9, "rc =  " DBGBOLDRED(%i) "\n",rc);
@@ -432,6 +441,13 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			return 1; // local parser puts message out
 		}
 Nextline:	// if a filter or format definition statement was processed, the logic jumps here
+		// free any strings in nv
+		if ( nv.name != NULL ) free(nv.name);
+		nv.name = NULL;
+		if ( nv.value != NULL ) free(nv.value);
+		nv.value = NULL;
+		if ( nv.option != NULL ) free(nv.option);
+		nv.option = NULL;
 		lineno++;
 	}
 
@@ -487,14 +503,14 @@ static int nv_split(char *buf, struct nv_pair *nv)
 	char * chdummy;
 	int idummy;
 
+	if ( buf == NULL ) return 5;
+	if ( nv == NULL ) return 5;
 	nv->name = NULL;
 	nv->value = NULL;
 	nv->option = NULL;
 	nv->name_len = 0;
 	nv->value_len = 0;
 	nv->option_len = 0;
-	if ( buf == NULL ) return 5;
-	if ( nv == NULL ) return 5;
 
 	if ( strlen(buf) == 0 ) return 0; // If there's nothing, go to next line
 	if ( (WhitespaceSpan(buf)) == strlen(buf) ) return 0; // If it's a all blank line, go to next line
@@ -571,7 +587,6 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
     // Handle empty string or string containing only whitespace
     if (str == NULL || *str == '\0') {
     	audit_msg(LOG_ERR, "hash value %s is missing - line %d", nv->value, line);
-    	free(str);
     	return 1;
     }
 
@@ -583,7 +598,6 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
     // If after skipping whitespace, the string is empty, it's not an integer
     if (*str == '\0') {
     	audit_msg(LOG_ERR, "hash value %s is blank - line %d", nv->value, line);
-    	free(str);
     	return 1;
     }
 
@@ -597,14 +611,12 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
     if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || // Overflow/underflow
         (errno != 0 && val == 0)) { // Other errors
     	audit_msg(LOG_ERR, "hash value %s is invalid - line %d", nv->value, line);
-    	free(str);
     	return 1;
     }
 
     // Check if the entire string was consumed by strtol (no non-numeric characters left)
     if (*endptr != '\0') {
     	audit_msg(LOG_ERR, "hash value %s Contains non-numeric characters after the number - line %d", nv->value, line);
-    	free(str);
     	return 1;
     }
 
@@ -885,7 +897,7 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	}
 	free(tempValue);
 
-	if ( match == FOREND ) {
+/*	if ( match == FOREND ) {
 		// tack wild card pass/reject at the end of the list to iplement the default feature
 		if ( config->phKeyConfig->phFormatChain == NULL ) {
 			// no chain, yet. create one and set the wild card
@@ -914,7 +926,7 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		audit_msg(LOG_ERR, "Out of order filter option; must define key before filter - line %d", line);
 		return 1;
 	}
-
+*/
 	return 0;
 }
 
@@ -975,7 +987,7 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, "no type card prior to field filters, create a " DBGBOLDRED(DefaultTypeChain) "\n");
 #endif	// DEBUG
-				TempFilterChain->DefaultTypeChain = CreatFilterTypeChain (TempFilterChain, NOOPT, tempValue, config);
+				TempFilterChain->DefaultTypeChain = CreatFilterTypeChain (TempFilterChain, NOOPT, strdup("-nil-"), config);
 			}
 			TempTypeChain = TempFilterChain->DefaultTypeChain;
 			config->TempTypeChain = TempTypeChain;
@@ -1010,7 +1022,7 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		}
 		// Allocate a new ph_Chain struct
 		TempFieldChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
-		TempFieldChain->label = nv->name;
+		TempFieldChain->label = strdup(nv->name);
 		TempFieldChain->Type = auid;
 		TempFieldChain->value = tempValue;
 		TempFieldChain->ParentTypeRecord = TempTypeChain; // link to the parent type record
@@ -1187,11 +1199,9 @@ out:
 
 void free_chain(ph_Chain_t * chain) {
 
-	if ( chain->next == NULL ) {
-		return;
-	} else {
-		free_chain( chain->next );
-	}
+	if ( chain == NULL ) return;
+	if ( chain->next != NULL ) free_chain( chain->next );
+
 	free( chain->label );
 	free( chain->value );
 	free ( chain );
@@ -1202,13 +1212,17 @@ void free_chain(ph_Chain_t * chain) {
 
 void free_filterchain(ph_FilterChain_t * chain) {
 
-	if ( chain->next == NULL ) {
-		return;
-	} else {
-		free_filterchain( chain->next );
-	}
-	free( chain->label );
-	free( chain->value );
+	if ( chain == NULL ) return;
+	if ( chain->next != NULL ) free_filterchain( chain->next );
+
+
+	if ( chain->label != NULL ) free( chain->label );
+	chain->label = NULL;
+	if ( chain->value != NULL ) free( chain->value );
+	chain->value = NULL;
+	if ( chain->TypeHashArray != NULL ) free( chain->TypeHashArray );
+	chain->TypeHashArray = NULL;
+	// if ( chain->DefaultTypeChain != NULL ) xxx ?? - should be caught by statusTypeChain
 	free ( chain );
 	chain = NULL;
 
@@ -1255,19 +1269,94 @@ void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 	return;
 }
 
+void NukemAll ( ph_config_t *pphConfig, ph_KeyConfig_t ** phKeyConfigs) {
+	free_phConfig(pphConfig);
+	if ( phKeyConfigs != NULL ) free ( phKeyConfigs );
+	phKeyConfigs = NULL;
+}
+
 void free_phConfig(ph_config_t *pphConfig)
 {
-
 	if (pphConfig == NULL) return;
-
-	if ( pphConfig->MTA != NULL ) free(pphConfig->MTA);
-	if ( pphConfig->phKeyConfig != NULL ) free_phKeyConfig( pphConfig->phKeyConfig ); // free hash table
+	//if ( pphConfig->phKeyConfig != NULL ) free_phKeyConfig( pphConfig->phKeyConfig ); // free hash table
+	pphConfig->hashSize = 0;
+	pphConfig->hashmask = 0;
+	pphConfig->typehashSize = 0;
+	pphConfig->fieldhashSize = 0;
+	pphConfig->LastDefault = 0;
 	pphConfig->phKeyConfigSize = 0;
+	freeStatusFieldChain(pphConfig->StatusFieldChainHead);
+	pphConfig->StatusFieldChainHead = NULL;
+	freeStatusTypeChain(pphConfig->StatusTypeChainHead);
+	pphConfig->StatusTypeChainHead = NULL;
+	freeStatusKeyChain(pphConfig->statusKeyConfigHead);
+	pphConfig->statusKeyConfigHead = NULL;
+	if ( pphConfig->name != NULL ) free(pphConfig->name);
+	pphConfig->name = NULL;
+	if ( pphConfig->MTA != NULL ) free(pphConfig->MTA);
+	pphConfig->MTA = NULL;
 	if ( pphConfig->LastMailTo != NULL ) free(pphConfig->LastMailTo);
+	pphConfig->LastMailTo = NULL;
 	if ( pphConfig->LastSubject != NULL ) free(pphConfig->LastSubject);
+	pphConfig->LastSubject = NULL;
 
 	return;
 }
+
+void freeStatusFieldChain(ph_Chain_t * chain) {
+
+	if ( chain == NULL ) return;
+	if ( chain->StatusFieldChainNext != NULL ) freeStatusFieldChain( chain->StatusFieldChainNext );
+
+	if ( chain->label != NULL ) free( chain->label );
+	chain->label = NULL;
+	if ( chain->value != NULL ) free( chain->value );
+	chain->value = NULL;
+	free ( chain );
+	chain = NULL;
+
+	return;
+}
+
+void freeStatusTypeChain(ph_Type_Chain_t * chain) {
+
+	if ( chain == NULL ) return;
+	if ( chain->StatusTypeChainNext != NULL ) freeStatusTypeChain( chain->StatusTypeChainNext );
+
+	if ( chain->Name != NULL ) free( chain->Name );
+	chain->Name = NULL;
+	if ( chain->FieldMaskArray != NULL ) free( chain->FieldMaskArray );
+	chain->FieldMaskArray = NULL;
+	if ( chain->MatchMaskArray != NULL ) free( chain->MatchMaskArray );
+	chain->MatchMaskArray = NULL;
+	if ( chain->FieldHashArray != NULL ) free( chain->FieldHashArray );
+	chain->FieldHashArray = NULL;
+	free ( chain );
+	chain = NULL;
+
+	return;
+}
+
+void freeStatusKeyChain(ph_KeyConfig_t * chain) {
+
+	if ( chain == NULL ) return;
+	if ( chain->statusKeyConfigNext != NULL ) freeStatusKeyChain( chain->statusKeyConfigNext );
+
+	if ( chain->key != NULL ) free( chain->key );
+	chain->key = NULL;
+	if ( chain->MailTo != NULL ) free( chain->MailTo );
+	chain->MailTo = NULL;
+	if ( chain->Subject != NULL ) free( chain->Subject );
+	chain->Subject = NULL;
+	free_filterchain(chain->phFilterChain);
+	chain->phFilterChain = NULL;
+
+	free ( chain );
+	chain = NULL;
+
+	return;
+}
+
 
 static char* valid_keywords( char **string ) {
 	*string = (char *)malloc(2);
