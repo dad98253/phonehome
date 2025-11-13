@@ -106,7 +106,7 @@ void free_filterchain(ph_FilterChain_t * chain);
 void freeStatusFieldChain(ph_Chain_t * chain);
 void freeStatusTypeChain(ph_Type_Chain_t * chain);
 void freeStatusKeyChain(ph_KeyConfig_t * chain);
-void NukemAll ( ph_config_t *pphConfig, ph_KeyConfig_t ** phKeyConfigs);
+void NukemAll ( ph_config_t *pphConfig );
 static int WhitespaceSpan(char* str);
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray );
 void DumpKeyHashArray( char * t1, char * title, ph_KeyConfig_t ** KeyHashArray, int LenArray);
@@ -213,6 +213,7 @@ void clear_phConfig(ph_config_t * pphConfig)
 
 	pphConfig->MTA = (char *)defaultMTA ;
 	pphConfig->hashSize = HASH_DEFAULT;
+	pphConfig->hashmask = HASH_DEFAULT - 1;
 	pphConfig->typehashSize = TYPE_HASH_DEFAULT;
 	pphConfig->fieldhashSize = FIELD_HASH_DEFAULT;
 	pphConfig->phKeyConfig = NULL;
@@ -622,6 +623,7 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	// save the integer value
 	config->hashSize = (int)val;
+	config->hashmask = (int)val - 1;
 
 	return 0;
 }
@@ -1269,7 +1271,7 @@ void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 	return;
 }
 
-void NukemAll ( ph_config_t *pphConfig, ph_KeyConfig_t ** phKeyConfigs) {
+void NukemAll ( ph_config_t *pphConfig ) {
 	free_phConfig(pphConfig);
 	if ( phKeyConfigs != NULL ) free ( phKeyConfigs );
 	phKeyConfigs = NULL;

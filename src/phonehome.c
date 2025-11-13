@@ -148,7 +148,7 @@ static ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type)
 static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
 extern int sendalert (char * record);
 extern void audit_msg(int priority, const char *fmt, ...);
-extern void NukemAll ( ph_config_t *pphConfig, ph_KeyConfig_t ** phKeyConfigs);
+extern void NukemAll ( ph_config_t *pphConfig );
 #ifdef DEBUG
 extern int debug_init();
 extern void debug_close();
@@ -283,7 +283,7 @@ int main(int argc, const char *argv[])
 				WinFprintf(fp9, DBGBOLDGREEN(reloading config file) "\n");
 			}
 #endif	// DEBUG
-			NukemAll ( &phConfig, phKeyConfigs);
+			NukemAll ( &phConfig );
 			if ( load_phConfig(&phConfig, cpath) ) {
 				return EXIT_FAILURE;
 			}
@@ -311,7 +311,8 @@ int main(int argc, const char *argv[])
 				//retval= select(1, &read_mask, NULL, NULL, &timeout);
 				retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
 			} else {
-				retval = pselect(1, &read_mask, NULL, NULL, NULL, &pselect_mask);
+//				retval = pselect(1, &read_mask, NULL, NULL, NULL, &pselect_mask);
+				retval = pselect(1, &read_mask, NULL, NULL, &timeout, &pselect_mask);
 			}
 			// If we timed out & have events, shake them loose
 			if ( retval == 0 && auparse_feed_has_data(au) ) auparse_feed_age_events(au);
@@ -368,7 +369,7 @@ int main(int argc, const char *argv[])
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
 	free(record);
-	NukemAll ( &phConfig, phKeyConfigs);
+	NukemAll ( &phConfig );
 #ifdef DEBUG
 	debug_close();
 //	fclose(fd);
