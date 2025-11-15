@@ -983,22 +983,17 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		// check if we have encountered a type card, yet
 		if ( currentRecordType == 0 ) {
 			// this appears to be a field match request, but the user didn't say which record type to expect it on
-			// we will save this in the DefaultTypeChain of the current filter chain...
-			// check to see if the struct has been allocated
-			if ( TempFilterChain->DefaultTypeChain == NULL ){
 #ifdef DEBUG
-				if(debug) WinFprintf(fp9, "no type card prior to field filters, create a " DBGBOLDRED(DefaultTypeChain) "\n");
+			if(debug) WinFprintf(fp9, "no type card prior to field filters\n");
 #endif	// DEBUG
-				TempFilterChain->DefaultTypeChain = CreatFilterTypeChain (TempFilterChain, NOOPT, strdup("-nil-"), config);
-			}
-			TempTypeChain = TempFilterChain->DefaultTypeChain;
-			config->TempTypeChain = TempTypeChain;
-			currentRecordType = 2;
+			audit_msg(LOG_ERR, "\"%s\" at line %d appears to be field match request - however, there has been no record type defined - it will be ignored", nv->name , line);
+			free(tempValue);
+			return 0;
 		}
 		// must be a non-type field match request
 		// check the name to see if it makes sense
 		if ( ( auid = nv_lookup_name ( auparse_ids, nv->name ) ) == NOOPT ) {
-			audit_msg(LOG_ERR, "Warning: \"%s\" at line %d is an unknown audit field - we will try to match it anyway", nv->name , line);
+			audit_msg(LOG_WARNING, "\"%s\" at line %d is an unknown audit field - we will try to match it anyway", nv->name , line);
 		}
 		// check for the special case of "* *" - this wildcard combination should match anything and does not require a record type
 		if ( auid == WILDCARDID && ( strcmp(tempValue,"*") == 0 ) ) {
