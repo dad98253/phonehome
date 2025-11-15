@@ -665,47 +665,56 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 	// locate the event key field
 	// for now we only will look in the first record - in audit.log, the key appears to
 	// always be on the first record
+	matches = 0;	// initialize the filter matches flag
 	do {
 		ftype = auparse_get_field_type(au);
 #ifdef DEBUG
 		fname = auparse_get_field_name(au);
 #endif	// DEBUG
-		if ( ftype == AUPARSE_TYPE_ESCAPED_KEY ) break;  //////////////////  what if it has multiple key fields?
+		// what if it has multiple key fields? We can't stop searching at the first key field we find...
+		if ( ftype == AUPARSE_TYPE_ESCAPED_KEY ) {
+			fval = auparse_interpret_field(au);
+			sum = 0;
+			for ( i = 0; i < strlen(fval); i++) {
+				sum+= (unsigned char)( *(fval+i) );
+			}
+			i = sum & phConfig.hashmask;
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(key field found:) " " DBGBOLDGREEN(%s) " hashes to: " DBGBOLDCYAN(%i)   "\n", fval, i);
+#endif	// DEBUG
+			// Check for collision
+#ifdef DEBUG
+			if(debug) if (phKeyConfigs == NULL) WinFprintf(fp9, DBGBOLDRED(phKeyConfigs not initialized) " at %d in %s\n",__LINE__,__FILE__);
+#endif	// DEBUG
+			if ( phKeyConfigs[i] == NULL ) {
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "hash table location " DBGBOLDCYAN(%i) " is not occupied\n", i);
+#endif	// DEBUG
+				continue; // not in hash table
+			}
+			// hmmm... something is there, lets see if it's a match
+			tempKeyConf = phKeyConfigs[i];
+			while (1) {
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "check if " DBGBOLDGREEN(%s) " = " DBGBOLDMAGENTA(%s) "\n", fval, tempKeyConf->key);
+#endif	// DEBUG
+				if ( strcmp (tempKeyConf->key, fval) == 0 ) {
+					matches = 1;	// signal that we found a match!!
+					break;
+				}
+				if ( tempKeyConf->next == NULL ) break;
+				tempKeyConf = tempKeyConf->next;
+			}
+			if ( matches ) {
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
+#endif	// DEBUG
+				break;
+			}
+		}	// note: there can be multiple keys specified for an event... we need to check all fields for keys
 	} while ( auparse_next_field(au) > 0 );
-	if ( ftype != AUPARSE_TYPE_ESCAPED_KEY ) return; // no key field found
-	fval = auparse_interpret_field(au);
-	sum = 0;
-	for ( i = 0; i < strlen(fval); i++) {
-		sum+= (unsigned char)( *(fval+i) );
-	}
-	i = sum & phConfig.hashmask;
-#ifdef DEBUG
-    if(debug) WinFprintf(fp9, DBGBOLDRED(key field found:) " " DBGBOLDGREEN(%s) " hashes to: " DBGBOLDCYAN(%i)   "\n", fval, i);
-#endif	// DEBUG
-	// Check for collision
-#ifdef DEBUG
-    if(debug) if (phKeyConfigs == NULL) WinFprintf(fp9, DBGBOLDRED(phKeyConfigs not initialized) " at %d in %s\n",__LINE__,__FILE__);
-#endif	// DEBUG
-	if ( phKeyConfigs[i] == NULL ) {
-#ifdef DEBUG
-		if(debug) WinFprintf(fp9, "hash table location " DBGBOLDCYAN(%i) " is not occupied\n", i);
-#endif	// DEBUG
-		return; // not in hash table
-	}
-	// hmmm... something is there, lets see if it's a match
-	tempKeyConf = phKeyConfigs[i];
-	while (1) {
-#ifdef DEBUG
-		if(debug) WinFprintf(fp9, "check if " DBGBOLDGREEN(%s) " = " DBGBOLDMAGENTA(%s) "\n", fval, tempKeyConf->key);
-#endif	// DEBUG
-		if ( strcmp (tempKeyConf->key, fval) == 0 ) break;
-		if ( tempKeyConf->next == NULL ) return;
-		tempKeyConf = tempKeyConf->next;
-	}
+	if ( !matches ) return; // no key field found
 	matches = 0;	// initialize the filter matches flag
-#ifdef DEBUG
-	if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
-#endif	// DEBUG
 // key matches: check the filters for this key...
 	if ( (tempFilterChain = tempKeyConf->phFilterChain) != NULL ) {
 		// for each filter in the chain, do:
