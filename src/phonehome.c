@@ -608,6 +608,10 @@ static void dump_whole_record(auparse_state_t *au)
 // and print its name and raw value and interpreted value.
 static void dump_fields_of_record(auparse_state_t *au)
 {
+	time_t EventTime;
+	struct tm *timeinfo;
+	char timestr[80];
+
 	WinFprintf(fp9, DBGBOLDCYAN(Dump fields of record:) "\n");
 
 	WinFprintf(fp9, DBGBOLDGREEN(record type) " " DBGBOLDRED(%d : %s) " has " DBGBOLDCYAN(%d) " fields\n", auparse_get_type(au), auparse_get_type_name(au), auparse_get_num_fields(au));
@@ -619,9 +623,12 @@ static void dump_fields_of_record(auparse_state_t *au)
 	}
 	/* Note that e->sec can be treated as time_t data if you want
 	 * something a little more readable */
-	WinFprintf(fp9, DBGBOLDRED(event time:) " " DBGBOLDGREEN(%u.%u:%lu) ", " DBGBOLDYELLOW(host) "=" DBGBOLDCYAN(%s) "\n", (unsigned)e->sec,
-		e->milli, e->serial, e->host ? e->host : "?");
-		auparse_first_field(au);
+	EventTime = auparse_get_time(au);
+	timeinfo = localtime(&EventTime);
+	// Format the time into a string
+	strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", timeinfo);
+	WinFprintf(fp9, DBGBOLDRED(event time:) " " DBGBOLDGREEN(%s.%u:%lu) ", " DBGBOLDYELLOW(host) "=" DBGBOLDCYAN(%s) "\n", timestr, e->milli, e->serial, e->host ? e->host : "?");
+	auparse_first_field(au);
 
 	do {
 		WinFprintf(fp9, DBGBOLDCYAN(field:) " " DBGBOLDGREEN(%s) "=" DBGBOLDYELLOW(%s) " (%s)\n",auparse_get_field_name(au),auparse_get_field_str(au),auparse_interpret_field(au));
