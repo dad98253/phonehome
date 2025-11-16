@@ -176,11 +176,13 @@ static const char * defaultSubject = SUBJECT_DEFAULT ;
 static modes mode = HEADER;
 static int currentRecordType;	// used to identify default field filters (if == 0, use DefaultTypeChain)
 
+
 void set_aumessage_mode(message_t mmode, debug_message_t debug)
 {
         message_mode = mmode;
         debug_message = debug;
 }
+
 
 void audit_msg(int priority, const char *fmt, ...)
 {
@@ -203,8 +205,6 @@ void audit_msg(int priority, const char *fmt, ...)
 }
 
 
-
-
 /*
  * Set everything to its default value
 */
@@ -223,6 +223,7 @@ void clear_phConfig(ph_config_t * pphConfig)
 
 	return;
 }
+
 
 int load_phConfig(struct ph_config *pphConfig, char *file)
 {
@@ -468,6 +469,7 @@ Nextline:	// if a filter or format definition statement was processed, the logic
 	return 0;
 }
 
+
 static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 	 const char *file)
 {
@@ -496,6 +498,7 @@ static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 	}
 	return NULL;
 }
+
 
 static int nv_split(char *buf, struct nv_pair *nv)
 {
@@ -544,6 +547,7 @@ static int nv_split(char *buf, struct nv_pair *nv)
 	return 0;
 }
 
+
 static struct kw_pair *kw_lookup(const char *val)
 {
 	int i = 0;
@@ -554,6 +558,7 @@ static struct kw_pair *kw_lookup(const char *val)
 	}
 	return &keywords[i];
 }
+
 
 static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -577,6 +582,7 @@ static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	return 0;
 }
+
 
 static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -627,6 +633,7 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	return 0;
 }
+
 
 static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -701,6 +708,7 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	return 0;
 }
 
+
 static int To_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	// if value is blank, there's nothing to do
@@ -729,6 +737,7 @@ static int To_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	return 0;
 
 }
+
 
 static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -775,6 +784,7 @@ static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	return 0;
 }
 
+
 static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
@@ -805,6 +815,7 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	return 0;
 }
+
 
 static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -876,6 +887,7 @@ static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	return 0;
 }
 
+
 static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
@@ -931,6 +943,7 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 */
 	return 0;
 }
+
 
 static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config) {
 	char *tempValue;
@@ -1079,6 +1092,7 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	return 0;
 }
 
+
 ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int match, char * tempValue, ph_config_t *config) {
 	ph_Type_Chain_t * TempTypeChain;
 	ph_Type_Chain_t * TypeChainTail;
@@ -1142,6 +1156,8 @@ static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 #endif	// DEBUG
 	return 0;
 }
+
+
 /*
  * This function is where we do the integrated check of the audispd config
  * options. At this point, all fields have been read. Returns 0 if no
@@ -1207,6 +1223,7 @@ void free_chain(ph_Chain_t * chain) {
 	return;
 }
 
+
 void free_filterchain(ph_FilterChain_t * chain) {
 
 	if ( chain == NULL ) return;
@@ -1247,6 +1264,7 @@ ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain) {
 	}
 
 }
+
 
 void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 

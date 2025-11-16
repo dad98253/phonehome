@@ -108,7 +108,6 @@ static char *record = NULL;
 static int sendmail = 0;
 static int priority;
 static int interpret = 0;
-static char* mykeyval = "MailMe";
 
 
 const char *capngerrors[] = {
@@ -143,7 +142,6 @@ static void term_handler( int sig );
 static void hup_handler( int sig );
 static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_type, void *user_data);
 static int init_ph(int argc, const char *argv[]);
-static inline void write_syslog(char *s);
 static ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
 static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
 extern int sendalert (char * record);
@@ -378,7 +376,6 @@ int main(int argc, const char *argv[])
 }
 
 
-
 /*
  * SIGTERM handler
  */
@@ -388,6 +385,7 @@ static void term_handler( int sig )
 //        syslog(LOG_INFO, "stopping phonehome");
 }
 
+
 /*
  * SIGHUP handler: re-read config
  */
@@ -396,6 +394,7 @@ static void hup_handler( int sig )
         hup = 1;
         syslog(LOG_INFO, "re-configuring phonehome");
 }
+
 
 static int init_ph(int argc, const char *argv[])
 {
@@ -448,121 +447,6 @@ static int init_ph(int argc, const char *argv[])
 	return 0;
 }
 
-static inline void write_syslog(char *s)
-{
-	if (interpret) {
-		int rc, header = 0;
-		char *mptr, tbuf[64];
-		int saved_stdin;
-#ifdef DEBUG
-    	if(debug) {
-    		WinFprintf(fp9, "read and parse the record\n");
-    	}
-#endif	// DEBUG
-		// Setup record buffer
-		if (record == NULL)
-			record = malloc(MAX_AUDIT_MESSAGE_LENGTH);
-		if (record == NULL)
-			return;
-
-		au = auparse_init(AUSOURCE_BUFFER, s);
-		if (au == NULL) {
-#ifdef DEBUG
-			if(debug) {
-				WinFprintf(fp9, DBGBOLDGREEN(phonehome audit plugin is exiting due to auparse init errors) "\n");
-			}
-#endif	// DEBUG
-			audit_msg(LOG_ERR,"phonehome audit plugin is exiting due to auparse init errors at line %d in %s", __LINE__, __FILE__);
-			return;
-		}
-		auparse_set_eoe_timeout(2);
-		auparse_add_callback(au, handle_read_event, NULL, NULL);
-		rc = auparse_first_record(au);
-
-		// AUDIT_EOE has no fields - drop it
-		if (auparse_get_num_fields(au) == 0) {
-			auparse_destroy(au);
-			return;
-		}
-
-		// Now iterate over the fields and print each one
-		mptr = record;
-		while (rc > 0 &&
-		       ((mptr-record) < (MAX_AUDIT_MESSAGE_LENGTH-128))) {
-			int ftype = auparse_get_field_type(au);
-			const char *fname = auparse_get_field_name(au);
-			const char *fval;
-			//syslog(priority, "ftype,fname,fval = %i,\"%s\",\"%s\"", ftype, fname, fval);
-			switch (ftype) {
-				case AUPARSE_TYPE_ESCAPED_KEY:
-					fval = auparse_interpret_field(au);
-					//syslog(priority, "type %i found fval = %s", AUPARSE_TYPE_ESCAPED_KEY, fval);
-					if ( strcmp(fval,mykeyval) == 0 ) sendmail = 1;
-					break;
-				case AUPARSE_TYPE_ESCAPED_FILE:
-					fval = auparse_interpret_realpath(au);
-					break;
-				case AUPARSE_TYPE_SOCKADDR:
-					fval =
-					    auparse_interpret_sock_address(au);
-					if (fval == NULL)
-					    fval =
-					      auparse_interpret_sock_family(au);
-					break;
-				default:
-					fval = auparse_interpret_field(au);
-					break;
-			}
-
-			mptr = stpcpy(mptr, fname ? fname : "?");
-			mptr = stpcpy(mptr, "=");
-			mptr = stpcpy(mptr, fval ? fval : "?");
-			mptr = stpcpy(mptr, " ");
-			rc = auparse_next_field(au);
-			if (!header && fname && strcmp(fname, "type") == 0) {
-				mptr = stpcpy(mptr, "msg=audit(");
-
-				time_t t = auparse_get_time(au);
-				struct tm *tv = localtime(&t);
-				if (tv)
-					strftime(tbuf, sizeof(tbuf),
-								"%x %T", tv);
-				else
-					strcpy(tbuf, "?");
-				mptr = stpcpy(mptr, tbuf);
-				mptr = stpcpy(mptr, ") : ");
-				header = 1;
-			}
-		}
-		// Record is complete, dump it to debug device
-#ifdef DEBUG
-		if(debug) {
-			WinFprintf(fp9, DBGBOLDCYAN(%s) "\n", record);
-	    }
-#endif	// DEBUG
-		if (sendmail) {
-			// somewhere deep in the bowls of the estmp library they close stdin and
-			// thus destroy its file descriptor. This will cause our select call in
-			// the mainprogfram to fail. The following is a kludge to get around this.
-			saved_stdin = dup(STDIN_FILENO);
-			// send the email alert
-			sendalert(record);
-			// restore the stdin descriptor
-			dup2(saved_stdin, STDIN_FILENO);
-			close(saved_stdin);
-			// Now stdin should be restored
-			// for kicks, we'll put a copy of the message in syslog as well:
-			syslog(priority, "warning email sent for msg = \"%s\"", record);
-		}
-		sendmail = 0;
-		auparse_destroy(au);
-	} else {
-		char *c = strchr(s, AUDIT_INTERP_SEPARATOR);
-		if (c)
-			*c = ' ';
-		syslog(priority, "%s", s);
-	}
-}
 
 void restore_stdin() {
 
@@ -583,6 +467,7 @@ void restore_stdin() {
 #endif	// DEBUG
 }
 
+
 #ifdef DEBUG
 // This function dumps a whole event by iterating over records
 static void dump_whole_event(auparse_state_t *au)
@@ -596,6 +481,7 @@ static void dump_whole_event(auparse_state_t *au)
 	} while (auparse_next_record(au) > 0);
 }
 
+
 // This function dumps a whole record's text
 static void dump_whole_record(auparse_state_t *au)
 {
@@ -603,6 +489,7 @@ static void dump_whole_record(auparse_state_t *au)
 
 	WinFprintf(fp9, DBGBOLDGREEN(%s) ": " DBGBOLDCYAN(%s) "\n", auparse_get_type_name(au), auparse_get_record_text(au));
 }
+
 
 // This function iterates through the fields of a record
 // and print its name and raw value and interpreted value.
@@ -635,6 +522,8 @@ static void dump_fields_of_record(auparse_state_t *au)
 	} while (auparse_next_field(au) > 0);
 }
 #endif	// DEBUG
+
+
 // This function receives a single complete event at a time from the auparse library.
 static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_type, void *user_data)
 {
@@ -921,6 +810,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 	return;
 }
 
+
 ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type) {
 
 	if ( phTypeChain == NULL ) return (NULL);
@@ -931,6 +821,7 @@ ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type) {
 		return ( CheckTypeChain( phTypeChain->next , type) );
 	}
 }
+
 
 ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label) {
 
