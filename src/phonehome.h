@@ -39,7 +39,7 @@
 #endif  // PHMAIN
 
 
-EXTERN auparse_state_t *au INITNULL;
+
 
 
 #undef EXTERN

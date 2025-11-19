@@ -94,7 +94,7 @@
 #endif
 #include "libaudit.h"
 #include "common.h"
-#include "auparse.h"
+#include <auparse.h>
 #ifdef DEBUG
 #include "debug2.h"
 #endif	// DEBUG
@@ -108,6 +108,7 @@ static char *record = NULL;
 static int sendmail = 0;
 static int priority;
 static int interpret = 0;
+static auparse_state_t *au =NULL;
 
 
 const char *capngerrors[] = {
@@ -144,7 +145,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 static int init_ph(int argc, const char *argv[]);
 static ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
 static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
-extern int sendalert (char * record);
+extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au);
 extern void audit_msg(int priority, const char *fmt, ...);
 extern void NukemAll ( ph_config_t *pphConfig );
 #ifdef DEBUG
@@ -738,7 +739,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 					auparse_first_record(au);
 					saved_stdin = dup(STDIN_FILENO);
 					// send the email alert
-					sendalert((char *)auparse_get_record_text(au));
+					sendalert(tempKeyConf, au);
 					// restore the stdin descriptor
 					dup2(saved_stdin, STDIN_FILENO);
 					close(saved_stdin);

@@ -21,7 +21,15 @@
 #include <openssl/ssl.h>
 #include <auth-client.h>
 #include <libesmtp.h>
+#include <auparse.h>
 #include "sendto.h"
+#include "ph-config.h"
+
+#include "libaudit.h"
+#include "common.h"
+#ifdef DEBUG
+#include "debug2.h"
+#endif	// DEBUG
 #include "ph-config.h"
 
 #if !defined (__GNUC__) || __GNUC__ < 2
@@ -69,7 +77,7 @@ int handle_invalid_peer_certificate(long vfy_result);
 void event_cb (smtp_session_t session, int event_no, void *arg, ...);
 char * getpassjk ( char * prompt );
 
-int sendalert (char * record) {
+int sendalert (ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	  smtp_session_t session;
 	  smtp_message_t message;
 	  smtp_recipient_t recipient;
@@ -166,16 +174,16 @@ int sendalert (char * record) {
 //	if (nocrlf)
 		strcpy(MyMessage,"");
 		strcat(MyMessage,"Subject: ");
-		strcat(MyMessage,phConfig.LastSubject);
+		strcat(MyMessage,tempKeyConf->Subject);
 		strcat(MyMessage,"\r\n");
 		strcat(MyMessage,"To: ");
-		strcat(MyMessage,phConfig.LastMailTo);
+		strcat(MyMessage,tempKeyConf->MailTo);
 		strcat(MyMessage,"\r\n");
 		strcat(MyMessage,"From: root@firewall11\r\n");
 		strcat(MyMessage,"\r\nWarning Will Robinson!!\r\n");
 		// if we have adequate space left in the static buffer, append the audit record to the email text
-		if ( strlen(record) < ( BUFLEN - strlen(MyMessage) - 10 ) ) {
-			strcat(MyMessage,record);
+		if ( strlen((char *)auparse_get_record_text(au)) < ( BUFLEN - strlen(MyMessage) - 10 ) ) {
+			strcat(MyMessage,(char *)auparse_get_record_text(au));
 			strcat(MyMessage,"\r\n");
 		}
 		smtp_set_messagecb(message, _smtp_message_str_cb, MyMessage);

@@ -94,9 +94,11 @@ char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 static ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Chain_t * find_chain_end(ph_Chain_t * chain);
 static ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain);
+static ph_FormatChain_t * find_formatchain_end(ph_FormatChain_t * chain);
 static ph_Type_Chain_t * TailofTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Type_Chain_t * TailofAllTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int match, char * tempValue, ph_config_t *config);
+static ph_Type_Chain_t * CreatFormatTypeChain (ph_FormatChain_t * TempFormatChain, int match, char * tempValue, ph_config_t *config);
 ph_Chain_t * TailofFieldChain(ph_Chain_t * phFieldChain);
 static ph_KeyConfig_t * TailofStatusKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Type_Chain_t * TailofStatusTypeChain(ph_Type_Chain_t * phTypeChain);
@@ -115,7 +117,7 @@ void DumpKeyConfig( char * t1, char * title, ph_KeyConfig_t * KeyConfig);
 void DumpConfig( char * t1, char * title, ph_config_t * Config);
 void DumpFilterChainNext( char * t1, char * title, ph_FilterChain_t * Config);
 void DumpFilterChain( char * t1, char * title, ph_FilterChain_t * Config);
-void DumpFormatChainNext( char * t1, char * title, ph_Chain_t * Config);
+void DumpFormatChainNext( char * t1, char * title, ph_FormatChain_t * Config);
 void DumpFormatChain( char * t1, char * title, ph_Chain_t * Config);
 void DumpFormatMacroChainNext( char * t1, char * title, ph_Chain_t * Config);
 void DumpFormatMacroChain( char * t1, char * title, ph_Chain_t * Config);
@@ -217,9 +219,15 @@ void clear_phConfig(ph_config_t * pphConfig)
 	pphConfig->typehashSize = TYPE_HASH_DEFAULT;
 	pphConfig->fieldhashSize = FIELD_HASH_DEFAULT;
 	pphConfig->phKeyConfig = NULL;
+	pphConfig->TempTypeChain = NULL;
+	pphConfig->statusKeyConfigHead = NULL;
+	pphConfig->StatusTypeChainHead = NULL;
+	pphConfig->StatusFieldChainHead = NULL;
+	pphConfig->CurrentFilterChain = NULL;
 	pphConfig->phKeyConfigSize = 0;
 	pphConfig->LastMailTo = (char *)defaultMailTo ;
 	pphConfig->LastSubject = (char *)defaultSubject ;
+	pphConfig->LastDefault = -1;
 
 	return;
 }
@@ -362,7 +370,8 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 #endif	// DEBUG
 				fclose(f);
 				return 1;
-			} else {	// in FILTER or FORMAT mode
+			} else {
+				// in FILTER or FORMAT mode
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, "Found potential auparse keyword \"" DBGBOLDRED(%s) "\" in line %d\n", nv.name, lineno);
 #endif	// DEBUG
@@ -372,7 +381,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 				int auid;
 				if(debug) {
 					if ( strcmp(nv.name,"type") == 0 ) {
-	//					recid = nv_lookup_name ( auparse_types, nv.value );
 						auid = -99;
 					} else {
 						auid = nv_lookup_name ( auparse_ids, nv.name );
@@ -399,7 +407,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 					fclose(f);
 					return 1; // local parser puts message out
 				}
-////////////////////////////////////////				xxxxxxxxxxxxx   process filters and formats here
 				goto Nextline;
 			}
 		} else { // is this keyword masked?
@@ -859,7 +866,6 @@ static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	TempFilterChain->PassOrReject = match;
 	currentRecordType = 0;	// reset the record type to none
 
-
 	if ( match == FILEND ) {
 #ifdef DEBUG
 		if(debug) WinFprintf(fp9, DBGBOLDCYAN(FILTER END detected) "\n");
@@ -891,48 +897,61 @@ static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
-	ph_Chain_t * TempFormatChain;
-#ifdef DEBUG
-	if(debug) WinFprintf(fp9, "In format_parser at line %d in %s\n", __LINE__, __FILE__);
-#endif	// DEBUG
+	ph_FormatChain_t * TempFormatChain;
+
 	// if value is blank, there's nothing to do
 	if ( nv->value == NULL ) return 0;
 	if ( nv->value_len == 0 ) return 0;
+	if ( nv->name == NULL ) return 0;
+	if ( nv->name_len == 0 ) return 0;
 
 	SetInputMode(FORMAT);
 
 	tempValue = strdup(nv->value);
 	// check for an option match
 	int match = nv_lookup_name ( format_arg, tempValue );
-
 	if ( match == NOOPT ) {
 		audit_msg(LOG_ERR, "\"%s\" not a valid format option - line %d", tempValue, line);
+		free(tempValue);
 		return 0;
 	}
-	free(tempValue);
 
-/*	if ( match == FOREND ) {
+	// no formatchain, yet. create one
+	if ( config->phKeyConfig->phFormatChain == NULL ) {
+		TempFormatChain = config->phKeyConfig->phFormatChain = (ph_FormatChain_t *) calloc(sizeof(ph_FormatChain_t), 1);
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "new format chain struct created at "DBGBOLDCYAN(%p) "\n",TempFormatChain);
+#endif	// DEBUG
+	} else {
+		TempFormatChain = find_formatchain_end(config->phKeyConfig->phFormatChain);
+		TempFormatChain->next = (ph_FormatChain_t *) calloc(sizeof(ph_FormatChain_t), 1);
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "new format chain struct created at " DBGBOLDCYAN(%p) " added at the end of the chain following " DBGBOLDCYAN(%p) "\n",TempFormatChain->next ,TempFormatChain);
+#endif	// DEBUG
+		TempFormatChain = TempFormatChain->next;
+	}
+	TempFormatChain->TypeHashSize = config->typehashSize;
+	TempFormatChain->label = strndup(nv->name,nv->name_len);
+	TempFormatChain->value = tempValue;
+	TempFormatChain->IncludeOrExclude = match;
+	currentRecordType = 0;	// reset the record type to none
+
+	if ( match == FOREND ) {
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, DBGBOLDCYAN(FORMAT END detected) "\n");
+#endif	// DEBUG
 		// tack wild card pass/reject at the end of the list to iplement the default feature
-		if ( config->phKeyConfig->phFormatChain == NULL ) {
-			// no chain, yet. create one and set the wild card
-			TempFormatChain = config->phKeyConfig->phFormatChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
-		} else {
-			// find the end of the chain
-			TempFormatChain = find_chain_end(config->phKeyConfig->phFormatChain);
-			TempFormatChain->next = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
-			TempFormatChain = TempFormatChain->next;
-		}
-		if ( config->phKeyConfig->currentFormat == FORINCLUDE ) {
-			TempFormatChain->PassOrReject = FOREXCLUDE;
-		} else {
-			TempFormatChain->PassOrReject = FORINCLUDE;
-		}
+		TempFormatChain->next = (ph_FormatChain_t *) calloc(sizeof(ph_FormatChain_t), 1);
+		TempFormatChain = TempFormatChain->next;
+		TempFormatChain->IncludeOrExclude = config->phKeyConfig->defaultFormat;
 		TempFormatChain->label = strdup("*");
 		TempFormatChain->value = strdup("*");
 		// reset input mode
 		SetInputMode(KEY);
 		return 0;
 	}
+	// must be a pass or reject command: set TempFilterChain
+	TempFormatChain->IncludeOrExclude = match;
 	// set it in the current phKeyConfig, too (if one exists)
 	if ( config->phKeyConfig != NULL ) {
 		config->phKeyConfig->currentFormat = match;
@@ -940,7 +959,7 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		audit_msg(LOG_ERR, "Out of order filter option; must define key before filter - line %d", line);
 		return 1;
 	}
-*/
+
 	return 0;
 }
 
@@ -999,7 +1018,7 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 #ifdef DEBUG
 			if(debug) WinFprintf(fp9, "no type card prior to field filters\n");
 #endif	// DEBUG
-			audit_msg(LOG_ERR, "\"%s\" at line %d appears to be field match request - however, there has been no record type defined - it will be ignored", nv->name , line);
+			audit_msg(LOG_ERR, "\"%s\" at line %d appears to be a field match request - however, there has been no record type defined - it will be ignored", nv->name , line);
 			free(tempValue);
 			return 0;
 		}
@@ -1150,10 +1169,207 @@ ph_Type_Chain_t * CreatFilterTypeChain (ph_FilterChain_t * TempFilterChain, int 
 }
 
 
-static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config) {
+ph_Type_Chain_t * CreatFormatTypeChain (ph_FormatChain_t * TempFormatChain, int match, char * tempValue, ph_config_t *config) {
+	ph_Type_Chain_t * TempTypeChain;
+	ph_Type_Chain_t * TypeChainTail;
+	int i;
+
+	if ( TempFormatChain->TypeHashArray == NULL ) {
+		TempFormatChain->TypeHashArray = (ph_Type_Chain_t **) calloc(sizeof(ph_Type_Chain_t *), TempFormatChain->TypeHashSize);
 #ifdef DEBUG
-	if(debug) WinFprintf(fp9, "In format_rule_parser at line %d in %s\n", __LINE__, __FILE__);
+		if(debug) WinFprintf(fp9, "TypeHashArray created at " DBGBOLDCYAN(%p) " with length " DBGBOLDGREEN(%i) " for the " DBGBOLDRED(%s) " format struct at " DBGBOLDCYAN(%p) "\n",
+				TempFormatChain->TypeHashArray, TempFormatChain->TypeHashSize, TempFormatChain->value, TempFormatChain);
 #endif	// DEBUG
+	}
+
+	// Allocate a new ph_Type_Chain struct
+	TempTypeChain = (ph_Type_Chain_t *) calloc(sizeof(ph_Type_Chain_t), 1);
+	TempTypeChain->Name = tempValue;
+	TempTypeChain->Type = match;
+	TempTypeChain->FieldHashSize = config->fieldhashSize;
+	// add the new type struct to the linked list for this filter
+	if ( TempFormatChain->AllTypeChainHead == NULL ) {
+		TempFormatChain->AllTypeChainHead = TempTypeChain;
+	} else {
+		TailofAllTypeChain(TempFormatChain->AllTypeChainHead)->AllTypeChainNext = TempTypeChain;
+	}
+	// add the new type struct to the linked list for all type structs
+	if ( config->StatusTypeChainHead == NULL ) {
+		config->StatusTypeChainHead = TempTypeChain;
+	} else {
+		TailofStatusTypeChain(config->StatusTypeChainHead)->StatusTypeChainNext = TempTypeChain;
+	}
+#ifdef DEBUG
+	if(debug) WinFprintf(fp9, "new TypeChain struct created at " DBGBOLDCYAN(%p) " for " DBGBOLDGREEN(%s) "\n",TempTypeChain, tempValue);
+#endif	// DEBUG
+	if ( match == NOOPT ) return (TempTypeChain);
+	// hash the key
+	i = match % TempFormatChain->TypeHashSize;
+#ifdef DEBUG
+	if ( TempFormatChain->TypeHashArray == NULL ) {
+		if (debug) WinFprintf(fp9, DBGBOLDRED(TempFormatChain->TypeHashArray == NULL) " at line %d in %s\n", __LINE__, __FILE__);
+		audit_msg(LOG_ERR,"phonehome audit plugin is exiting due to program bug at line %d in %s", __LINE__, __FILE__);
+	}
+#endif	// DEBUG
+	// Check for collision
+	if ( TempFormatChain->TypeHashArray[i] != NULL ) {
+		// find the end of the linked list...
+		TypeChainTail = TailofTypeChain(TempFormatChain->TypeHashArray[i]);
+		TypeChainTail->next = TempTypeChain;
+	} else {
+		TempFormatChain->TypeHashArray[i] = TempTypeChain;
+	}
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, DBGBOLDGREEN(%s) " hashed to " DBGBOLDGREEN(%i) " ie, hash table entry = " DBGBOLDCYAN(%p) "\n",tempValue, i, &(TempFormatChain->TypeHashArray[i]) );
+#endif	// DEBUG
+	return (TempTypeChain);
+}
+
+
+static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config) {
+	char *tempValue;
+	int match;
+	int auid;
+	int i;
+	long long int sum = 0;
+	ph_FormatChain_t * TempFormatChain;
+	ph_Type_Chain_t * TempTypeChain;
+	ph_Chain_t * TempFieldChain;
+	ph_Chain_t * FieldChainTail;
+
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+	tempValue = strdup(nv->value);
+
+	if ( config->phKeyConfig->phFormatChain == NULL ) {
+		audit_msg(LOG_ERR, "\"%s %s\" at line %d appears to be out of order - expecting a \"format\" directive", nv->name, tempValue, line);
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "\"%s %s\" at line %d appears to be out of order - expecting a \"format\" directive", nv->name, tempValue, line);
+#endif	// DEBUG
+		free(tempValue);
+		return 0;
+	}
+	// find the last thing we worked on...
+	TempTypeChain = config->TempTypeChain;
+	// find the current format chain tail
+	TempFormatChain = find_formatchain_end(config->phKeyConfig->phFormatChain);
+	// check for an record type match
+	if ( strcmp(nv->name,"type") == 0 ) {
+		match  = nv_lookup_name ( auparse_types, tempValue );
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, DBGBOLDGREEN(match %s) " found - record type is " DBGBOLDRED(%i) "\n", tempValue, match);
+#endif	// DEBUG
+		if ( match == NOOPT ) {
+			audit_msg(LOG_ERR, "\"%s\" not a valid audit record type - line %d", tempValue, line);
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, "\"%s\" not a valid audit record type - line %d\n", tempValue, line);
+#endif	// DEBUG
+			free(tempValue);
+			return 0;
+		}
+		currentRecordType = 1;	// a record type is found. Any field filters that follow apply to this record
+		// create a type format table entry
+		TempTypeChain = CreatFormatTypeChain (TempFormatChain, match, tempValue, config);
+		config->TempTypeChain = TempTypeChain;
+		// make sure that the format chain
+	} else {
+		// check if we have encountered a type card, yet
+		if ( currentRecordType == 0 ) {
+			// this appears to be a field match request, but the user didn't say which record type to expect it on
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, "no type card prior to field formats\n");
+#endif	// DEBUG
+			audit_msg(LOG_ERR, "\"%s\" at line %d appears to be a field match request - however, there has been no record type defined - it will be ignored", nv->name , line);
+			free(tempValue);
+			return 0;
+		}
+		// must be a non-type field match request
+		// check the name to see if it makes sense
+		if ( ( auid = nv_lookup_name ( auparse_ids, nv->name ) ) == NOOPT ) {
+			audit_msg(LOG_WARNING, "\"%s\" at line %d is an unknown audit field - we will try to match it anyway", nv->name , line);
+		}
+		// check for the special case of "* *" - this wildcard combination should match anything and does not require a record type
+		if ( auid == WILDCARDID && ( strcmp(tempValue,"*") == 0 ) ) {
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(wild card %s:%s detected) "\n", nv->name, tempValue);
+#endif	// DEBUG
+//			if ( TempFilterChain->DefaultTypeChain == NULL ) {
+//				TempFilterChain->DefaultTypeChain = CreatFilterTypeChain (TempFilterChain, auid, tempValue, config);
+//			}
+		}
+		// if there is no DefaultTypeChain defined, what record do we apply it to?
+//		if ( TempFilterChain->DefaultTypeChain == NULL ) {
+//			audit_msg(LOG_ERR, "\"%s %s\" at line %d appears to be defining a field match without first specifying a recored type - it will be ignored", nv->name , tempValue, line);
+//			free(tempValue);
+//			return 0;
+//		}
+		// create a field hash table if one does not exist
+		if ( TempTypeChain->FieldHashArray == NULL ) {
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(FieldHashArray) " created\n");
+#endif	// DEBUG
+			TempTypeChain->FieldHashArray = (ph_Chain_t **) calloc(sizeof(ph_Chain_t *), config->fieldhashSize);
+		}
+		// Allocate a new ph_Chain struct
+		TempFieldChain = (ph_Chain_t *) calloc(sizeof(ph_Chain_t), 1);
+		TempFieldChain->label = strdup(nv->name);
+		TempFieldChain->Type = auid;
+		TempFieldChain->value = tempValue;
+		TempFieldChain->ParentTypeRecord = TempTypeChain; // link to the parent type record
+		// add the new field struct to the linked list for all field structs
+		if ( config->StatusFieldChainHead == NULL ) {
+			config->StatusFieldChainHead = TempFieldChain;
+		} else {
+			TailofStatusFieldChain(config->StatusFieldChainHead)->StatusFieldChainNext = TempFieldChain;
+		}
+		// re-calculate the field mask for the parent type struct to include our new field struct
+		// get the total number of fields under the parent type struct - this is the mask bit index for our field
+		int FieldSeqNum = TempTypeChain->numOfFieldChildren;
+		(TempTypeChain->numOfFieldChildren)++;	// increment the field count in the parent type struct
+		TempFieldChain->MatchMask = 1ull << ( FieldSeqNum % 64 );
+		TempFieldChain->MatchMaskIndex = FieldSeqNum / 64;
+		// make sure the parent's MaskArray is big enough
+		if ( TempTypeChain->MatchMaskArray == NULL ) {
+			// no MaskArray, make it length 1
+			TempTypeChain->MatchMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), 1);
+			TempTypeChain->FieldMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), 1);
+			TempTypeChain->lengthOfMaskArray = 1;
+		}
+		if ( TempTypeChain->lengthOfMaskArray < (TempFieldChain->MatchMaskIndex + 1) ) {
+			// we need to make the MaskArray bigger
+			unsigned long long int	* OldMaskArray = TempTypeChain->MatchMaskArray;
+			TempTypeChain->MatchMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), TempFieldChain->MatchMaskIndex + 1);
+			for (i=0; i<TempTypeChain->lengthOfMaskArray; i++) {
+				TempTypeChain->MatchMaskArray[i] = OldMaskArray[i];
+			}
+			free(OldMaskArray);
+			free(TempTypeChain->FieldMaskArray); // FieldMaskArray should always be all zeros - just free it & make new one
+			TempTypeChain->FieldMaskArray = (unsigned long long int	*) calloc(sizeof(unsigned long long int), TempFieldChain->MatchMaskIndex + 1);
+		}
+		// or our new MatchMask into the parent's MatchMaskArray
+		(TempTypeChain->MatchMaskArray[TempFieldChain->MatchMaskIndex]) = TempTypeChain->MatchMaskArray[TempFieldChain->MatchMaskIndex] | TempFieldChain->MatchMask;
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "field filter " DBGBOLDRED(%s=%s) " created, auid = " DBGBOLDGREEN(%i)  "\n", TempFieldChain->label, TempFieldChain->value, TempFieldChain->Type);
+#endif	// DEBUG
+		// hash the label
+		for ( i = 0; i < strlen(nv->name); i++) {
+			sum+= (unsigned char)( *((nv->name)+i) );
+		}
+		i = sum % TempTypeChain->FieldHashSize;
+		// Check for collision
+		if ( TempTypeChain->FieldHashArray[i] != NULL ) {
+			// find the end of the linked list...
+			FieldChainTail = TailofFieldChain(TempTypeChain->FieldHashArray[i]);
+			FieldChainTail->next = TempFieldChain;
+		} else {
+			TempTypeChain->FieldHashArray[i] = TempFieldChain;
+		}
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "field hash is " DBGBOLDGREEN(%i) " created table entry at " DBGBOLDGREEN(%p)  "\n", i, &(TempTypeChain->FieldHashArray[i]) );
+#endif	// DEBUG
+	}
+
 	return 0;
 }
 
@@ -1244,6 +1460,25 @@ void free_filterchain(ph_FilterChain_t * chain) {
 }
 
 
+void free_formatchain(ph_FormatChain_t * chain) {
+
+	if ( chain == NULL ) return;
+	if ( chain->next != NULL ) free_formatchain( chain->next );
+
+
+	if ( chain->label != NULL ) free( chain->label );
+	chain->label = NULL;
+	if ( chain->value != NULL ) free( chain->value );
+	chain->value = NULL;
+	if ( chain->TypeHashArray != NULL ) free( chain->TypeHashArray );
+	chain->TypeHashArray = NULL;
+	// if ( chain->DefaultTypeChain != NULL ) xxx ?? - should be caught by statusTypeChain
+	free ( chain );
+	chain = NULL;
+
+	return;
+}
+
 ph_Chain_t * find_chain_end(ph_Chain_t * chain) {
 
 	if ( chain->next == NULL ) {
@@ -1266,6 +1501,16 @@ ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain) {
 }
 
 
+ph_FormatChain_t * find_formatchain_end(ph_FormatChain_t * chain) {
+
+	if ( chain->next == NULL ) {
+		return (chain);
+	} else {
+		return (find_formatchain_end( chain->next ));
+	}
+
+}
+
 void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 
 	if ( phKeyConfig->next == NULL ) {
@@ -1276,8 +1521,7 @@ void free_phKeyConfig(ph_KeyConfig_t * phKeyConfig) {
 	free( phKeyConfig->MailTo );
 	free( phKeyConfig->Subject );
 	free_filterchain( phKeyConfig->phFilterChain );
-	free_chain( phKeyConfig->phFormatChain );
-	free_chain( phKeyConfig->phFormatMacroChain );
+	free_formatchain( phKeyConfig->phFormatChain );
 	free ( phKeyConfig );
 	phKeyConfig = NULL;
 
@@ -1714,6 +1958,7 @@ void DumpKeyConfig( char * t1, char * title, ph_KeyConfig_t * KeyConfig) {
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MailTo) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->MailTo) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Subject) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->Subject) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->defaultPolicy) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->defaultPolicy);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->defaultFormat) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->defaultPolicy);
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->currentPolicy) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->currentPolicy);
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->currentFormat) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->currentFormat);
 	strcpy(tempstr, title);
@@ -1724,7 +1969,6 @@ void DumpKeyConfig( char * t1, char * title, ph_KeyConfig_t * KeyConfig) {
 	DumpFormatChainNext( tempstr2, tempstr,  KeyConfig->phFormatChain);
 	strcpy(tempstr, title);
 	strcat(tempstr, DBGBOLDGREEN(->phFormatChain) );
-	DumpFormatMacroChainNext( tempstr2, tempstr,  KeyConfig->phFormatMacroChain);
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->next) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(KeyConfig->next) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->statusKeyConfigNext) "; \t" DBGBOLDYELLOW(%p) "\n", t1, title, (void *)(KeyConfig->statusKeyConfigNext) );
 
@@ -1827,7 +2071,7 @@ void DumpFilterChain( char * t1, char * title, ph_FilterChain_t * Config){
 	return;
 }
 
-void DumpFormatChainNext( char * t1, char * title, ph_Chain_t * Config){
+void DumpFormatChainNext( char * t1, char * title, ph_FormatChain_t * Config){
 	if( !debug ) return;
 	if ( Config == NULL ) {
 		WinFprintf(fp9, DBGBOLDGREEN(%s%s) ": " DBGBOLDRED(-null-) "\n", t1, title);

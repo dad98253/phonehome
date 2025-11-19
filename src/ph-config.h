@@ -124,11 +124,11 @@ typedef struct ph_KeyConfig
 	char *	MailTo;
 	char *	Subject;
 	int		defaultPolicy;
+	int		defaultFormat;
 	int		currentPolicy;
 	int		currentFormat;
 	struct	ph_FilterChain * phFilterChain;
-	struct	ph_Chain * phFormatChain;
-	struct	ph_Chain * phFormatMacroChain;
+	struct	ph_FormatChain * phFormatChain;
 	struct	ph_KeyConfig * next;
 	struct	ph_KeyConfig * statusKeyConfigNext;	// helpful link for cleanup
 } ph_KeyConfig_t;
@@ -191,6 +191,21 @@ typedef struct ph_Chain
 	struct	ph_Chain * next;
 	struct	ph_Chain * StatusFieldChainNext;	// helpful link for cleanup
 } ph_Chain_t;
+
+typedef struct ph_FormatChain
+{
+	char *	label;	// ??
+	char *	value;	// ??
+	int		IncludeOrExclude;
+	int		TypeHashSize;
+	struct	ph_Type_Chain * DefaultTypeChain;	// (optional) if field format are
+												// defined prior to a record type
+												// definition, they are saved here
+	struct	ph_Type_Chain ** TypeHashArray;
+	struct	ph_Type_Chain * AllTypeChainHead;	// points to a chain of all Record
+												// Types included in this filter segment
+	struct	ph_FormatChain * next;
+} ph_FormatChain_t;
 
 typedef struct nv_list
 {
