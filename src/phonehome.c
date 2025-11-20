@@ -761,6 +761,17 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 			}
 		}
 #endif	// DEBUG
+		if (!matches && tempKeyConf->defaultPolicy) {	// check if should apply default policy
+			auparse_first_record(au);
+			saved_stdin = dup(STDIN_FILENO);
+			// send the email alert
+			sendalert(tempKeyConf, au);
+			// restore the stdin descriptor
+			dup2(saved_stdin, STDIN_FILENO);
+			close(saved_stdin);
+			// Now stdin should be restored
+			audit_msg(LOG_INFO, "Event # \"%li\" precipitated a phone home message", auparse_get_serial(au));
+		}
 	} else {
 #ifdef DEBUG
 		if(debug) WinFprintf(fp9, DBGBOLDRED(no filter chain found for this key) "/n");
