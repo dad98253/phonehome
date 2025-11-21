@@ -181,11 +181,16 @@ int sendalert (ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		strcat(MyMessage,"\r\n");
 		strcat(MyMessage,"From: root@firewall11\r\n");
 		strcat(MyMessage,"\r\nWarning Will Robinson!!\r\n");
+
+		auparse_first_record(au);
+		do {
 		// if we have adequate space left in the static buffer, append the audit record to the email text
-		if ( strlen((char *)auparse_get_record_text(au)) < ( BUFLEN - strlen(MyMessage) - 10 ) ) {
-			strcat(MyMessage,(char *)auparse_get_record_text(au));
-			strcat(MyMessage,"\r\n");
-		}
+			if ( strlen((char *)auparse_get_record_text(au)) < ( BUFLEN - strlen(MyMessage) - 10 ) ) {
+				strcat(MyMessage,(char *)auparse_get_record_text(au));
+				strcat(MyMessage,"\r\n");
+			}
+		} while (auparse_next_record(au) > 0);
+
 		smtp_set_messagecb(message, _smtp_message_str_cb, MyMessage);
 //	else
 //		smtp_set_message_fp(message, fp);
