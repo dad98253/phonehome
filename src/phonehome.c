@@ -725,14 +725,23 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #ifdef DEBUG
 				if(debug) {
 					WinFprintf(fp9, "filter " DBGBOLDGREEN(matches) "!\n");
-					if ( tempFilterChain->PassOrReject ) {
-						WinFprintf(fp9, DBGBOLDRED(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
-					} else {
-						WinFprintf(fp9, DBGBOLDGREEN(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+					switch (tempFilterChain->PassOrReject) {
+						case FILPASS:
+							WinFprintf(fp9, DBGBOLDGREEN(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+							break;
+						case FILREJECT:
+							WinFprintf(fp9, DBGBOLDRED(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+							break;
+						case FILEND:
+							WinFprintf(fp9, DBGBOLDYELLOW(%s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+							break;
+						default:
+							WinFprintf(fp9, DBGBOLDRED(Error! Error! .. %s) " event number %li !\n",tempFilterChain->value, auparse_get_serial(au));
+							break;
 					}
 				}
 #endif	// DEBUG
-				if ( !(tempFilterChain->PassOrReject) ) {
+				if ( tempFilterChain->PassOrReject == FILPASS ) {
 					// somewhere deep in the bowls of the estmp library they close stdin and
 					// thus destroy its file descriptor. This will cause our select call in
 					// the main program to fail. The following is a kludge to get around this.
@@ -761,7 +770,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 			}
 		}
 #endif	// DEBUG
-		if (!matches && tempKeyConf->defaultPolicy) {	// check if should apply default policy
+		if ( ( !matches || tempFilterChain->PassOrReject == FILEND ) && tempKeyConf->defaultPolicy == DEFPASS ) {	// check if should apply default policy
 			auparse_first_record(au);
 			saved_stdin = dup(STDIN_FILENO);
 			// send the email alert
