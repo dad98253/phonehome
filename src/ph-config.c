@@ -61,6 +61,7 @@
 #include <math.h>
 #define PHCONFIGMAIN
 #include "ph-config.h"
+#include "phonehome.h"
 #ifdef DEBUG
 #include "debug2.h"
 extern int WinFprintf(FILE *hf, const char * fmt,...);
@@ -761,15 +762,14 @@ static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	// check for the string "$hostname" if we find it, substitute our hostname
 	if ( (result1 = strstr(tempValue, "$hostname")) != NULL ) {
-		char hostname[HOST_NAME_MAX + 1]; // Buffer to store the hostname
-		if (gethostname(hostname, HOST_NAME_MAX + 1) == 0) {
+		if ( myhostname != NULL ) {
 			char *temp2;
 			temp2 = tempValue;
-			tempValue = (char *) malloc(strlen(temp2) - strlen("$hostname") + strlen(hostname) + 2 );
+			tempValue = (char *) malloc(strlen(temp2) - strlen("$hostname") + strlen(myhostname) + 2 );
 			int numtocpy = (int)(result1-temp2);
 			strncpy(tempValue, temp2, numtocpy );
 			*(tempValue+numtocpy) = '\000';
-			strcat(tempValue, hostname);
+			strcat(tempValue, myhostname);
 			char * start = ( result1 + strlen("$hostname") );
 			strcat(tempValue, start);
 			free(temp2);
@@ -1957,10 +1957,10 @@ void DumpKeyConfig( char * t1, char * title, ph_KeyConfig_t * KeyConfig) {
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->key) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->key) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->MailTo) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->MailTo) );
 	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->Subject) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, IFNULL(KeyConfig->Subject) );
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->defaultPolicy) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->defaultPolicy);
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->defaultFormat) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->defaultPolicy);
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->currentPolicy) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->currentPolicy);
-	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->currentFormat) "; \t" DBGBOLDYELLOW(%i) "\n", t1, title, KeyConfig->currentFormat);
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->defaultPolicy) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, nv_lookup_option ( default_arg,  KeyConfig->defaultPolicy ) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->defaultFormat) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, nv_lookup_option ( format_arg,  KeyConfig->defaultFormat ) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->currentPolicy) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, nv_lookup_option ( filter_arg,  KeyConfig->currentPolicy ) );
+	WinFprintf(fp9, DBGBOLDGREEN(%s%s) DBGBOLDGREEN(->currentFormat) "; \t" DBGBOLDYELLOW(%s) "\n", t1, title, nv_lookup_option ( format_arg,  KeyConfig->currentFormat ) );
 	strcpy(tempstr, title);
 	strcat(tempstr, DBGBOLDGREEN(->phFilterChain) );
 	DumpFilterChainNext( tempstr2, tempstr,  KeyConfig->phFilterChain);

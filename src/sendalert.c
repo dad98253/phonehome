@@ -31,6 +31,7 @@
 #include "debug2.h"
 #endif	// DEBUG
 #include "ph-config.h"
+#include "phonehome.h"
 
 #if !defined (__GNUC__) || __GNUC__ < 2
 # define __attribute__(x)
@@ -94,6 +95,10 @@ int sendalert (ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	  FILE *fp;
 //	  int c;
 	  char MyMessage[BUFLEN];
+	  time_t EventTime;
+	  struct tm *timeinfo;
+	  char timestr[80];
+	  char tmpstr[60];
 
 	  enum notify_flags notify = Notify_NOTSET;
 
@@ -179,10 +184,37 @@ int sendalert (ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		strcat(MyMessage,"To: ");
 		strcat(MyMessage,tempKeyConf->MailTo);
 		strcat(MyMessage,"\r\n");
-		strcat(MyMessage,"From: root@firewall11\r\n");
+		strcat(MyMessage,"From: root@");
+		strcat(MyMessage,myhostname);
+		strcat(MyMessage,"\r\n");
 		strcat(MyMessage,"\r\nWarning Will Robinson!!\r\n");
 
 		auparse_first_record(au);
+	    sprintf(tmpstr, "%d",  auparse_get_line_number(au));
+		strcat(MyMessage, "line number, file name = ");
+		strcat(MyMessage, tmpstr);
+		strcat(MyMessage, ", ");
+		strcat(MyMessage, auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
+		strcat(MyMessage,"\r\n");
+		const au_event_t *e = auparse_get_timestamp(au);
+		if (e != NULL) {
+			// Note that e->sec can be treated as time_t data if you want something a little more readable
+			EventTime = auparse_get_time(au);
+			timeinfo = localtime(&EventTime);
+			// Format the time into a string
+			strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", timeinfo);
+			strcat(MyMessage, "event time: ");
+			strcat(MyMessage, timestr);
+			strcat(MyMessage, ".");
+			sprintf(tmpstr, "%d", e->milli);
+			strcat(MyMessage, tmpstr);
+			strcat(MyMessage, ":");
+			sprintf(tmpstr, "%ld", e->serial);
+			strcat(MyMessage, tmpstr);
+			strcat(MyMessage, " host=");
+			strcat(MyMessage, e->host ? e->host : "?");
+			strcat(MyMessage,"\r\n");
+		}
 		do {
 		// if we have adequate space left in the static buffer, append the audit record to the email text
 			if ( strlen((char *)auparse_get_record_text(au)) < ( BUFLEN - strlen(MyMessage) - 10 ) ) {

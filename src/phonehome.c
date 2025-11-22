@@ -89,6 +89,7 @@
 #include <errno.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <limits.h>
 #ifdef HAVE_LIBCAP_NG
 #include <cap-ng.h>
 #endif
@@ -373,6 +374,7 @@ int main(int argc, const char *argv[])
 	debug_close();
 //	fclose(fd);
 #endif	// DEBUG
+	if ( strcmp ( myhostname, "localhost" ) != 0 ) free(myhostname);
 	return EXIT_SUCCESS;
 }
 
@@ -399,8 +401,18 @@ static void hup_handler( int sig )
 
 static int init_ph(int argc, const char *argv[])
 {
-
+	char * temphostname = NULL;
 	priority = LOG_INFO;
+	// get the hostname
+	temphostname = (char *) calloc(HOST_NAME_MAX + 1, 1);
+	if (gethostname(temphostname, HOST_NAME_MAX + 1) == 0) {
+		myhostname = (char *) calloc(strlen(temphostname) + 1, 1);
+		strcpy(myhostname, temphostname);
+		free(temphostname);
+	} else {
+		myhostname = "localhost";
+		audit_msg(LOG_WARNING, "Error getting hostname at line %i in %s because %s", __LINE__, __FILE__, strerror(errno));
+	}
     /*
       * the main program accepts a single (optional) argument:
       * it's configuration file (this is NOT the plugin configuration
@@ -672,7 +684,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 					}
 					i = sum % tempTypeChain->FieldHashSize;
 #ifdef DEBUG
-					if(debug) WinFprintf(fp9, "field: " DBGBOLDGREEN(%s) " hashes into " DBGBOLDCYAN(%i) " (%s)\n", fname, i);
+					if(debug) WinFprintf(fp9, "field: " DBGBOLDGREEN(%s) " hashes into " DBGBOLDCYAN(%i) "\n", fname, i);
 #endif	// DEBUG
 					// Check for collision
 					TempFieldChain = tempTypeChain->FieldHashArray[i];
@@ -683,7 +695,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 						continue; // no match on label, check the next field
 					}
 					// check if the value matches ("*" matches everything)
-					if ( ( strcmp(TempFieldChain->value, auparse_get_field_str(au)) == 0 ) || ( strcmp(TempFieldChain->value, "*") == 0 ) ) {
+					if ( ( strcmp(TempFieldChain->value, auparse_interpret_field(au)) == 0 ) || ( strcmp(TempFieldChain->value, "*") == 0 ) ) {
 						// value matches - set the match bit in the type struct
 						if ( tempTypeChain->MatchMaskArray == NULL ) {
 #ifdef DEBUG

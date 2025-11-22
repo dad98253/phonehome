@@ -39,7 +39,7 @@
 #endif  // PHMAIN
 
 
-
+EXTERN char * myhostname INITNULL;
 
 
 #undef EXTERN
