@@ -90,7 +90,7 @@ static char* valid_keywords( char **string );
 static int nv_deesc(char *buf, char **name, int * name_len, char **ptr);
 static void SetInputMode(modes newmode);
 static int kw_unsetMask();
-static int nv_lookup_name ( const nv_list_t *nv, char * myname );
+int nv_lookup_name ( const nv_list_t *nv, char * myname );
 char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 static ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Chain_t * find_chain_end(ph_Chain_t * chain);

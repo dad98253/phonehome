@@ -41,6 +41,48 @@
 
 EXTERN char * myhostname INITNULL;
 
+#ifdef PHMAIN
+const struct nv_list priority_ids[] =
+{
+		{ "LOG_DEBUG", LOG_DEBUG },
+		{ "LOG_INFO", LOG_INFO },
+		{ "LOG_NOTICE", LOG_NOTICE },
+		{ "LOG_WARNING", LOG_WARNING },
+		{ "LOG_ERR", LOG_ERR },
+		{ "LOG_CRIT", LOG_CRIT },
+		{ "LOG_ALERT", LOG_ALERT },
+		{ "LOG_EMERG", LOG_EMERG },
+		{ NULL, NOOPT }
+};
+const struct nv_list facility_ids[] =
+{
+		{ "LOG_LOCAL0", LOG_LOCAL0 },
+		{ "LOG_LOCAL1", LOG_LOCAL1 },
+		{ "LOG_LOCAL2", LOG_LOCAL2 },
+		{ "LOG_LOCAL3", LOG_LOCAL3 },
+		{ "LOG_LOCAL4", LOG_LOCAL4 },
+		{ "LOG_LOCAL5", LOG_LOCAL5 },
+		{ "LOG_LOCAL6", LOG_LOCAL6 },
+		{ "LOG_LOCAL7", LOG_LOCAL7 },
+		{ "LOG_AUTH", LOG_AUTH },
+		{ "LOG_AUTHPRIV", LOG_AUTHPRIV },
+		{ "LOG_DAEMON", LOG_DAEMON },
+		{ "LOG_SYSLOG", LOG_SYSLOG },
+		{ "LOG_USER", LOG_USER },
+		{ NULL, NOOPT }
+};
+const struct nv_list option_ids[] =
+{
+		{ "debug", 1 },
+		{ "interpret", 2 },
+		{ "verbose", 3 },
+		{ NULL, NOOPT }
+};
+#else	// PHMAIN
+EXTERN const struct nv_list priority_ids[];
+EXTERN const struct nv_list facility_ids[];
+EXTERN const struct nv_list option_ids[];
+#endif // PHMAIN
 
 #undef EXTERN
 #undef INITIZERO

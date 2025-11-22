@@ -99,9 +99,9 @@
 #ifdef DEBUG
 #include "debug2.h"
 #endif	// DEBUG
+#include "ph-config.h"
 #define PHMAIN
 #include "phonehome.h"
-#include "ph-config.h"
 
 static volatile int stop = 0;
 static volatile int hup = 0;
@@ -149,6 +149,8 @@ static ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * labe
 extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au);
 extern void audit_msg(int priority, const char *fmt, ...);
 extern void NukemAll ( ph_config_t *pphConfig );
+extern int nv_lookup_name ( const nv_list_t *nv, char * myname );
+extern char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 #ifdef DEBUG
 extern int debug_init();
 extern void debug_close();
@@ -157,7 +159,6 @@ extern int OpenDebugDevice(FILE **hp);
 extern int iDebugOutputDevice;
 extern char * lpDebugServerName;
 extern const struct nv_list auparse_types[];
-extern char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 static void dump_whole_event(auparse_state_t *au);
 static void dump_whole_record(auparse_state_t *au);
 static void dump_fields_of_record(auparse_state_t *au);
@@ -177,8 +178,6 @@ int main(int argc, const char *argv[])
 	if (init_ph(argc, argv)) return EXIT_FAILURE;
 #ifdef DEBUG
 	if(debug) {
-		// set send audit_msg to send messages to syslog
-		set_aumessage_mode(MSG_SYSLOG,DBG_YES);
 	    lpDebugServerName = "grandma";
 		debug_init();
 		if ( OpenDebugDevice((FILE**)&fp9) == 0 ) {
@@ -402,6 +401,7 @@ static void hup_handler( int sig )
 static int init_ph(int argc, const char *argv[])
 {
 	char * temphostname = NULL;
+	int facility = LOG_USER;
 	priority = LOG_INFO;
 	// get the hostname
 	temphostname = (char *) calloc(HOST_NAME_MAX + 1, 1);
@@ -426,22 +426,50 @@ static int init_ph(int argc, const char *argv[])
 		cpath = (char *)argv[1];
 		syslog(LOG_INFO, "Using configuration file: %s", cpath);
 	}
-#ifdef DEBUG
 	if (argc > 2) {
-		if ( strcmp((char *)argv[2], "debug") == 0 ) {
-			debug = 1;
-			syslog(LOG_INFO, "Debug option is enabled");
+		int temp;
+		if ( ( temp = nv_lookup_name ( priority_ids, (char *)argv[2] ) ) != NOOPT ) priority = temp;
+		else if ( ( temp = nv_lookup_name ( facility_ids, (char *)argv[2] ) ) != NOOPT ) facility = temp;
+		else if ( ( temp = nv_lookup_name ( option_ids, (char *)argv[2] ) ) != NOOPT ) {
+			switch (temp) {
+#ifdef DEBUG
+				case 1:
+					debug = 1;
+					syslog(LOG_INFO, "Debug option is enabled");
+					break;
+#endif	// DEBUG
+				case 2:
+				case 3:
+					interpret = 1;
+					break;
+				default:
+					break;
+			}
+		} else {
+			syslog(LOG_ERR, "Unknown second argument %s. Aborting", argv[2]);
+			return 1;
 		}
+
+#ifdef DEBUG
+		if ( debug ) {
+			set_aumessage_mode(MSG_SYSLOG,DBG_YES);	// set send audit_msg to send messages to syslog
+		} else {
+			set_aumessage_mode(MSG_SYSLOG,DBG_NO);
+		}
+#else	// DEBUG
+		set_aumessage_mode(MSG_SYSLOG,DBG_NO);
+#endif	// DEBUG
+		syslog(LOG_INFO,
+			"plugin will log using facility %s and priority %s",
+			nv_lookup_option(facility_ids, facility), nv_lookup_option(priority_ids, priority) );
+		if (facility != LOG_USER)
+			openlog("phonehome", 0, facility);
 	}
 	if (argc > 3) {
-#else	// DEBUG
-	if (argc > 2) {
-#endif	// DEBUG
 		syslog(LOG_ERR, "Error - invalid number of parameters passed. Aborting");
 		return 1;
 	}
 
-	interpret = 1;
 	pid_t mypid = getpid();
 	syslog(LOG_INFO, "plugin starting with pid=%d", mypid);
 //	if (facility != LOG_USER) openlog("audispd", 0, facility);
