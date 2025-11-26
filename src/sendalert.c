@@ -83,6 +83,8 @@ static void errmsg(const char *m);
 static void msg(const char *m);
 int create_tar_archive(const char *archive_name, const char *folder_path);
 extern void audit_msg(int priority, const char *fmt, ...);
+extern void testBase64 (char * attachment_path);
+extern char *base64_encode_file(const char *filepath, size_t *output_len);
 
 int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	GMimeMessage *message;
@@ -90,6 +92,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	GMimeTextPart *text_part;
 	GMimePart *attachment_part;
 	GMimeStream *stream;
+	GMimeStream *streamMem;
 	GMimeDataWrapper *wrapper;
     GByteArray * message_string;
 	const char *attachment_path = "/tmp/audit.tar.gz"; // Replace with your file path
@@ -122,10 +125,11 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		audit_msg(LOG_ERR,"Error deleting '%s' archive file", attachment_path);
 	}
 // create the archive file
-	create_tar_archive(attachment_path, "/var/log/audit");
+//	create_tar_archive(attachment_path, "/var/log/audit");
+	create_tar_archive(attachment_path, "/home/dad/workspace_test/testmime/Debug/testmime.c");
 
 	/* Initialize the GMime library */
-	g_mime_init();
+//	g_mime_init();
 
 	/* 1. Create the top-level multipart/mixed container */
 	multipart = g_mime_multipart_new_with_subtype("mixed");
@@ -219,15 +223,21 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	g_mime_message_set_mime_part(message, GMIME_OBJECT(multipart));
 
 	/* 6. Serialize the message to a string for sending (e.g., via SMTP or for debugging) */
-	stream = g_mime_stream_mem_new();
-	g_mime_object_write_to_stream(GMIME_OBJECT(message), NULL, stream);
-	message_string = g_mime_stream_mem_get_byte_array(GMIME_STREAM_MEM(stream));
+	streamMem = g_mime_stream_mem_new();
+	message_string = g_mime_stream_mem_get_byte_array(GMIME_STREAM_MEM(streamMem));
+////	streamMem = g_mime_stream_mem_new_with_byte_array (message_string);
+	g_mime_object_write_to_stream(GMIME_OBJECT(message), NULL, streamMem);
 
 #ifdef DEBUG
 		if(debug) {
 			WinFprintf(fp9, DBGBOLDGREEN(--- Generated Email Message ---) "\n");
-//			WinFprintf(fp9, "%s\n", message_string->data);
+			WinFprintf(fp9, "%s\n", message_string->data);
 			WinFprintf(fp9, DBGBOLDGREEN(--- End of Message ---) "\n");
+
+			printf("--- Generated Email Message ---\n");
+			printf("%s\n", message_string->data);
+			printf("--- End of Message ---\n");
+			testBase64((char *)attachment_path);
 		}
 #endif	// DEBUG
 
@@ -305,7 +315,8 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		status = smtp_message_transfer_status(smtpmessage);
 #ifdef DEBUG
 		if(debug) {
-			WinFprintf(fp9, DBGBOLDYELLOW(%d) " " DBGBOLDGREEN(%s) , status->code,
+			WinFprintf(fp9, "smtp message transfer status code is " DBGBOLDYELLOW(%d)
+					" status message : " DBGBOLDGREEN(%s) , status->code,
 					(status->text != NULL) ? status->text : "\n");
 		}
 #endif	// DEBUG
@@ -317,18 +328,32 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	}
 #endif	// DEBUG
 	// Free resources consumed by the program.
+	cleanup:
+	/* 8. Clean up GMime objects */
+	g_mime_stream_flush (stream);
+	g_mime_stream_flush (streamMem);
+
+//	g_free(message_string);
+//	guint8 * somebytes = g_byte_array_free(message_string, FALSE);
+//	if(debug) {
+//		WinFprintf(fp9, "g_byte_array_free returned %p\n", somebytes);
+//	}
+//	g_free(somebytes);
+
 	// Clean up ESMTP session
 	smtp_destroy_session(session);
-
-	/* 8. Clean up GMime objects */
-	cleanup:
-	g_object_unref(message);
-	g_object_unref(stream);
-//	g_free(message_string);
-	g_mime_shutdown();
-//	smtp_destroy_session(session);
 	auth_destroy_context(authctx);
 	auth_client_exit();
+
+//	g_object_unref(message_string);
+//	g_byte_array_unref(message_string);
+	g_object_unref(attachment_part);
+	g_object_unref(text_part);
+	g_object_unref(multipart);
+	g_object_unref(message);
+	g_object_unref(stream);
+	g_object_unref(streamMem);
+//	g_mime_shutdown();
 
 	return EXIT_SUCCESS;
 }
@@ -340,7 +365,12 @@ void print_recipient_status (smtp_recipient_t recipient,const char *mailbox, voi
 	const smtp_status_t *status;
 
 	status = smtp_recipient_status (recipient);
-	printf ("%s: %d %s", mailbox, status->code, status->text);
+#ifdef DEBUG
+	if(debug) {
+		WinFprintf(fp9, "print recipient status : " DBGBOLDGREEN(%s) " : " DBGBOLDYELLOW(%d)
+				" " DBGBOLDRED(%s) , mailbox, status->code, status->text);
+	}
+#endif	// DEBUG
 }
 
 
