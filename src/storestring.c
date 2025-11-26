@@ -85,22 +85,21 @@ int AllocateCharVector(unsigned char **p, int length)
 int ReAllocateCharVector(db_heapfile_t *p, int length)
 {
 	int i;
+#ifdef DEBUGREALLOCATECHAR
 	int isize = 0;
-
+#endif	// DEBUGREALLOCATECHAR
 	// if a request for size is made on an uninitialized array, return error
 	if ( p->heapfile == NULL && length == 0 ) return 0;
 	// loength must be positive
 	if ( length < 0 ) return 0;
-
+#ifdef DEBUGREALLOCATECHAR
 	if ( p->heapfile != NULL ) {
 		isize = _msize( p->heapfile );
 	} else {
 		isize = 0;
 	}
-
-#ifdef DEBUGREALLOCATECHAR
-printf( "Size of block (%p) (len=%i) before realloc: %u\n", p->heapfile, length, isize );
-#endif
+	printf( "Size of block (%p) (len=%i) before realloc: %u\n", p->heapfile, length, isize );
+#endif	// DEBUGREALLOCATECHAR
 	if ( length == 0 ) return (p->numlines);
 
 /* Reallocate and show new size: */
@@ -108,10 +107,10 @@ printf( "Size of block (%p) (len=%i) before realloc: %u\n", p->heapfile, length,
 	if( ( p->heapfile = (char **)realloc( p->heapfile, i * sizeof(*(p->heapfile)) ) ) ==  NULL ) return (0);
 	int oldlength = p->numlines;
 	p->numlines += length;
-	isize = _msize( p->heapfile );
 #ifdef DEBUGREALLOCATECHAR
-printf( "Size of block (%p) after realloc: %u (requested %i)\n", p->heapfile, isize ,i);
-#endif
+	isize = _msize( p->heapfile );
+	printf( "Size of block (%p) after realloc: %u (requested %i)\n", p->heapfile, isize ,i);
+#endif	// DEBUGREALLOCATECHAR
 	for ( i=oldlength; i<(p->numlines); i++) {
 		p->heapfile[i] = NULL;
 	}
