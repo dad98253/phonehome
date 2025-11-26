@@ -93,7 +93,6 @@ static int kw_unsetMask();
 int nv_lookup_name ( const nv_list_t *nv, char * myname );
 char * nv_lookup_option ( const nv_list_t *nv, int myoption );
 static ph_KeyConfig_t * TailofKeyConfig(ph_KeyConfig_t * phKeyConfigs);
-static ph_Chain_t * find_chain_end(ph_Chain_t * chain);
 static ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain);
 static ph_FormatChain_t * find_formatchain_end(ph_FormatChain_t * chain);
 static ph_Type_Chain_t * TailofTypeChain(ph_Type_Chain_t * phTypeChain);
@@ -1479,16 +1478,6 @@ void free_formatchain(ph_FormatChain_t * chain) {
 	return;
 }
 
-ph_Chain_t * find_chain_end(ph_Chain_t * chain) {
-
-	if ( chain->next == NULL ) {
-		return (chain);
-	} else {
-		return (find_chain_end( chain->next ));
-	}
-
-}
-
 
 ph_FilterChain_t * find_filterchain_end(ph_FilterChain_t * chain) {
 
@@ -1720,7 +1709,7 @@ static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
 		*(*name) = '\000';
 	}
 	*name_len = fldlen;
-	*ptr = (*ptr)+=fldlen;
+	(*ptr)+=fldlen;
 	*ptr = *ptr+WhitespaceSpan(*ptr);
 	return fldlen;
 }
