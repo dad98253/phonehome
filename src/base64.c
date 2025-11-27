@@ -35,9 +35,12 @@ char *base64_encode_file(const char *filepath, size_t *output_len) {
 
 	// Calculate required output buffer size
 	// (file_size / 3) * 4 + potential padding + null terminator
-	size_t encoded_buffer_size = (file_size + 2) / 3 * 4 + file_size / 76 * 2
-			+ 20;
-	char *encoded_data = calloc(encoded_buffer_size, 1);
+	size_t numEncodedBytes = (file_size + 2) / 3 * 4; // (max)
+	size_t numLines = (file_size + 3) / 3 * 4 / 76 + 1;
+	size_t padding = 20;
+	size_t encoded_buffer_size = numEncodedBytes + numLines * 2 + padding;
+
+	char *encoded_data = (char *)calloc(encoded_buffer_size, 1);
 	if (!encoded_data) {
 		perror("Error allocating memory");
 		fclose(fp);
@@ -48,15 +51,39 @@ char *base64_encode_file(const char *filepath, size_t *output_len) {
 	unsigned char out_buffer[4];
 	int bytes_read;
 	size_t current_out_pos = 0;
+	unsigned long long int numlines = 0;
+	unsigned long long int lastloc = 0;
+	unsigned long long int linelen = 0;
 
 	while ((bytes_read = fread(in_buffer, 1, 3, fp)) > 0) {
+		if ( bytes_read < 0 || bytes_read > 3 ) {
+			perror("bad number of bytes returned while reading tar file");
+			fclose(fp);
+			return NULL;
+		}
 		if ( (current_out_pos % 78) == 0) {
 			memcpy(encoded_data + current_out_pos, CRLF, 2);
 			current_out_pos += 2;
+			numlines++;
+			linelen = current_out_pos - lastloc;
+#ifdef DEBUGBASE64
+			printf("linelen,numlines = %lld,%lld\n",linelen,numlines);
+#endif	// DEBUGBASE64
+			lastloc = current_out_pos;
 		}
 		encode_block(in_buffer, out_buffer, bytes_read);
 		memcpy(encoded_data + current_out_pos, out_buffer, 4);
 		current_out_pos += 4;
+		if ( bytes_read < 3 ) {
+			if ( feof(fp) ) {
+				printf("EOF reading tar file");
+				break;
+			}
+			if ( ferror(fp) ) {
+				perror("Error reading tar file");
+				break;
+			}
+		}
 	}
 	encoded_data[current_out_pos] = '\0'; // Null-terminate
 	*output_len = current_out_pos;

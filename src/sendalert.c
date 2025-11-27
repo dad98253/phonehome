@@ -87,8 +87,10 @@ extern char *base64_encode_file(const char *filepath, size_t *output_len);
 
 int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 
-	const char *attachment_path = "/tmp/audit.tar.gz";
+	const char *TarFileName = "audit.tar.gz";
+	char *attachment_path = NULL;
 //	const char *attachment_mime_type = "application/x-tar";
+	ph_FormatChain_t *tempFormatChain = NULL;
 	smtp_session_t session;
 	smtp_message_t smtpmessage;
 	smtp_recipient_t recipient;
@@ -106,22 +108,43 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	char tmpstr[60];
 	char * b64string;
 	size_t output_len = 0;
+	int AttachLogs = 0;
 
 	enum notify_flags notify = Notify_NOTSET;
-	// make sure that the archive does not exsist
-	if (remove(attachment_path) == 0) {
-#ifdef DEBUG
-		if(debug) {
-			WinFprintf(fp9, "File " DBGBOLDGREEN(%s) " deleted successfully.\n", attachment_path);
-		}
-#endif	// DEBUG
-	} else {
-		audit_msg(LOG_ERR,"Error deleting '%s' archive file", attachment_path);
-	}
-// create the archive file
-//	create_tar_archive(attachment_path, "/var/log/audit");
-	create_tar_archive(attachment_path, "/home/dad/workspace_test/testmime/Debug/testmime.c");
 
+	// check if we are to include a copy of the audit log files
+	// Note that we must check the entire format chain because the
+	// flag could have been set anywhere in the chain
+	if ( tempKeyConf->phFormatChain != NULL ) {
+		tempFormatChain = tempKeyConf->phFormatChain;
+		do {
+			if ( tempFormatChain->AttachLogs ) {
+				AttachLogs = 1;
+				break;
+			}
+			tempFormatChain = tempFormatChain->next;
+		} while (tempFormatChain != NULL);
+		tempFormatChain = tempKeyConf->phFormatChain;	// reset the format chain back to its head
+	}
+	if ( AttachLogs ) {
+		// create the scratch file name
+		attachment_path = strdup(phConfig.tmpDir);
+		attachment_path = (char*)realloc(attachment_path, strlen(phConfig.tmpDir) + strlen(TarFileName) + 2 );
+		strcat(attachment_path,TarFileName);
+		// make sure that the archive does not exist
+		if (remove(attachment_path) == 0) {
+#ifdef DEBUG
+			if(debug) {
+				WinFprintf(fp9, "File " DBGBOLDGREEN(%s) " deleted successfully.\n", attachment_path);
+			}
+#endif	// DEBUG
+		} else {
+			audit_msg(LOG_ERR,"Error deleting '%s' archive file", attachment_path);
+		}
+	// create the archive file
+		create_tar_archive(attachment_path, phConfig.logDir);
+	//	create_tar_archive(attachment_path, "/home/dad/workspace_test/testmime/Debug/testmime.c");
+	}
 
 	/* 1. Create the top-level multipart/mixed container */
 	MyMessage = (char*)calloc(BUFLEN, 1);
@@ -185,34 +208,41 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
 
-	// 3. Create the attachment part from the base64 string
-	strcat(MyMessage, "Content-Type: application/octet-stream\r\n");
-	strcat(MyMessage, "Content-Disposition: attachment; filename=audit.tar.gz\r\n");
-	strcat(MyMessage, "Content-Transfer-Encoding: base64\r\n");
-	strcat(MyMessage, "\r\n");
-	strcat(MyMessage, "\r\n");
+	if ( AttachLogs ) {
+		// 3. Create the attachment part from the base64 string
+		strcat(MyMessage, "Content-Type: application/octet-stream\r\n");
+		strcat(MyMessage, "Content-Disposition: attachment; filename=audit.tar.gz\r\n");
+		strcat(MyMessage, "Content-Transfer-Encoding: base64\r\n");
+		strcat(MyMessage, "\r\n");
+		strcat(MyMessage, "\r\n");
 
-	b64string = base64_encode_file(attachment_path, &output_len);
-	MyMessage = (char*)realloc(MyMessage, BUFLEN + output_len);
-	strcat(MyMessage, b64string);
-	free(b64string);
+		b64string = base64_encode_file(attachment_path, &output_len);
+		MyMessage = (char*)realloc(MyMessage, BUFLEN + output_len);
+		strcat(MyMessage, b64string);
+		free(b64string);
+		b64string = NULL;
+		free(attachment_path);
+		attachment_path = NULL;
 
-	strcat(MyMessage, "\r\n");
-	strcat(MyMessage, "\r\n");
-	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
-
+		strcat(MyMessage, "\r\n");
+		strcat(MyMessage, "\r\n");
+		strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
+	}
 
 
 #ifdef DEBUG
 		if(debug) {
 			WinFprintf(fp9, DBGBOLDGREEN(--- Generated Email Message ---) "\n");
+#ifdef DEBUGMYMESSAGE
 			WinFprintf(fp9, "%s\n", MyMessage);
+#endif	// DEBUGMYMESSAGE
 			WinFprintf(fp9, DBGBOLDGREEN(--- End of Message ---) "\n");
 
 			printf("--- Generated Email Message ---\n");
+#ifdef DEBUGMYMESSAGE
 			printf("%s\n", MyMessage);
+#endif	// DEBUGMYMESSAGE
 			printf("--- End of Message ---\n");
-			testBase64((char *)attachment_path);
 		}
 #endif	// DEBUG
 

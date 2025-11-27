@@ -86,6 +86,8 @@
 #define MTA_DEFAULT	"localhost:25"
 #define MAILTO_DEFAULT	"root"
 #define SUBJECT_DEFAULT	"Warning from $hostname"
+#define LOGDIR_DEFAULT	"/var/log/audit/"
+#define TMPDIR_DEFAULT	"/tmp/"
 #define HASH_DEFAULT	1024
 #define TYPE_HASH_DEFAULT	256
 #define FIELD_HASH_DEFAULT	256
@@ -96,12 +98,14 @@
 
 typedef enum { DEFPASS, DEFREJECT } default_t;
 typedef enum { FILPASS, FILREJECT, FILEND } filter_t;
-typedef enum { FORMACRO, FORINCLUDE, FOREXCLUDE, FOREND } format_t;
+typedef enum { FORMACRO, FORINCLUDE, FOREXCLUDE, FORLOGS, FOREND } format_t;
 
 typedef struct ph_config
 {
 	char *	name;	// config file basename
 	char *	MTA;
+	char *	logDir;
+	char *	tmpDir;
 	int		hashSize;
 	unsigned long int hashmask;
 	int		typehashSize;
@@ -128,7 +132,7 @@ typedef struct ph_KeyConfig
 	int		currentPolicy;
 	int		currentFormat;
 	struct	ph_FilterChain * phFilterChain;
-	struct	ph_FormatChain * phFormatChain;
+	struct	ph_FormatChain * phFormatChain;		// the format chain for this filter
 	struct	ph_KeyConfig * next;
 	struct	ph_KeyConfig * statusKeyConfigNext;	// helpful link for cleanup
 } ph_KeyConfig_t;
@@ -196,6 +200,7 @@ typedef struct ph_FormatChain
 {
 	char *	label;	// ??
 	char *	value;	// ??
+	int		AttachLogs;							// attach a tar file of the audit log files
 	int		IncludeOrExclude;
 	int		TypeHashSize;
 	struct	ph_Type_Chain * DefaultTypeChain;	// (optional) if field format are

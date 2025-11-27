@@ -76,6 +76,8 @@ static char *get_line(FILE *f, char *buf, unsigned size, int *lineno, const char
 static int nv_split(char *buf, struct nv_pair *nv);
 static struct kw_pair *kw_lookup(const char *val);
 static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int logdir_parser(struct nv_pair *nv, int line, ph_config_t *config);
+static int tmpdir_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int key_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int To_parser(struct nv_pair *nv, int line, ph_config_t *config);
@@ -136,6 +138,8 @@ static struct kw_pair keywords[] =
   {"MTA",				MTA_parser,				0,	1 },
   {"hash",				hash_parser,			0,	1 },
   {"key",				key_parser,				0,	1 },
+  {"logdir",			logdir_parser,			0,	1 },
+  {"tmpdir",			tmpdir_parser,			0,	1 },
   {"To",				To_parser,				0,	1 },
   {"Subject",			Subject_parser,			0,	1 },
   {"default",			default_parser,			0,	1 },
@@ -164,6 +168,7 @@ static const struct nv_list format_arg[] =
   {"macro",		FORMACRO },
   {"include",	FORINCLUDE },
   {"exclude",	FOREXCLUDE },
+  {"logs",		FORLOGS },
   {"end",		FOREND },
   { NULL,		NOOPT }
 };
@@ -175,6 +180,8 @@ static debug_message_t debug_message = DBG_NO;
 static const char * defaultMTA = MTA_DEFAULT ;
 static const char * defaultMailTo = MAILTO_DEFAULT ;
 static const char * defaultSubject = SUBJECT_DEFAULT ;
+static const char * defaultLogDir = LOGDIR_DEFAULT ;
+static const char * defaultTmpDir = TMPDIR_DEFAULT ;
 static modes mode = HEADER;
 static int currentRecordType;	// used to identify default field filters (if == 0, use DefaultTypeChain)
 
@@ -227,6 +234,8 @@ void clear_phConfig(ph_config_t * pphConfig)
 	pphConfig->phKeyConfigSize = 0;
 	pphConfig->LastMailTo = (char *)defaultMailTo ;
 	pphConfig->LastSubject = (char *)defaultSubject ;
+	pphConfig->logDir = (char *)defaultLogDir;
+	pphConfig->tmpDir = (char *)defaultTmpDir;
 	pphConfig->LastDefault = -1;
 
 	return;
@@ -591,6 +600,42 @@ static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 }
 
 
+static int logdir_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	config->logDir = strndup(nv->value,nv->value_len);
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "Log files directory set to " DBGBOLDCYAN(%s) "\n",config->logDir);
+#endif	// DEBUG
+
+	return 0;
+}
+
+
+static int tmpdir_parser(struct nv_pair *nv, int line, ph_config_t *config)
+{
+	// if value is blank, there's nothing to do
+	if ( nv->value == NULL ) return 0;
+	if ( nv->value_len == 0 ) return 0;
+
+	config->tmpDir = strndup(nv->value,nv->value_len);
+	// make sure it ends with a "/"
+	int lenname = strlen(config->tmpDir);
+	if ( config->tmpDir[lenname-1] != '/' ) {
+		config->tmpDir = (char*) realloc(config->tmpDir, lenname + 2 );
+		strcat(config->tmpDir, "/");
+	}
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, "scratch file directory set to " DBGBOLDCYAN(%s) "\n",config->tmpDir);
+#endif	// DEBUG
+
+	return 0;
+}
+
+
 static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char * str;
@@ -932,7 +977,11 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	TempFormatChain->TypeHashSize = config->typehashSize;
 	TempFormatChain->label = strndup(nv->name,nv->name_len);
 	TempFormatChain->value = tempValue;
-	TempFormatChain->IncludeOrExclude = match;
+	if ( match == FORLOGS ) {
+		TempFormatChain->AttachLogs = 1;
+	} else {
+		TempFormatChain->IncludeOrExclude = match;
+	}
 	currentRecordType = 0;	// reset the record type to none
 
 	if ( match == FOREND ) {
