@@ -96,7 +96,6 @@
 #include "libaudit.h"
 #include "common.h"
 #include <auparse.h>
-#include <gmime/gmime.h>
 #ifdef DEBUG
 #include "debug2.h"
 #endif	// DEBUG
@@ -366,7 +365,6 @@ int main(int argc, const char *argv[])
 	// Flush any accumulated events from queue
 	auparse_flush_feed(au);
 	auparse_destroy(au);
-	g_mime_shutdown();
 	sleep(1); // wait a second for auditd shutdown to catch up. Otherwise, it may restart us.
 	syslog(LOG_INFO, "phonehome stoped");
 	free(record);
@@ -488,7 +486,6 @@ static int init_ph(int argc, const char *argv[])
 	auparse_set_eoe_timeout(2);
 	auparse_add_callback(au, handle_read_event, NULL, NULL);
 	/* Initialize the GMime library */
-	g_mime_init();
 	return 0;
 }
 

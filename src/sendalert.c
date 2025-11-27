@@ -20,7 +20,6 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <dirent.h>
-#include <gmime/gmime.h>
 #include <openssl/ssl.h>
 #include <auth-client.h>
 #include <libesmtp.h>
@@ -87,16 +86,9 @@ extern void testBase64 (char * attachment_path);
 extern char *base64_encode_file(const char *filepath, size_t *output_len);
 
 int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
-	GMimeMessage *message;
-	GMimeMultipart *multipart;
-	GMimeTextPart *text_part;
-	GMimePart *attachment_part;
-	GMimeStream *stream;
-	GMimeStream *streamMem;
-	GMimeDataWrapper *wrapper;
-    GByteArray * message_string;
-	const char *attachment_path = "/tmp/audit.tar.gz"; // Replace with your file path
-	const char *attachment_mime_type = "application/x-tar"; // Adjust MIME type as needed (e.g., image/jpeg, application/pdf)
+
+	const char *attachment_path = "/tmp/audit.tar.gz";
+//	const char *attachment_mime_type = "application/x-tar";
 	smtp_session_t session;
 	smtp_message_t smtpmessage;
 	smtp_recipient_t recipient;
@@ -107,11 +99,13 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	char *from = NULL;
 	int noauth = 0;
 	const au_event_t *e;
-	char MyMessage[BUFLEN];
+	char *MyMessage = NULL;
 	time_t EventTime;
 	struct tm *timeinfo;
 	char timestr[80];
 	char tmpstr[60];
+	char * b64string;
+	size_t output_len = 0;
 
 	enum notify_flags notify = Notify_NOTSET;
 	// make sure that the archive does not exsist
@@ -128,15 +122,31 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 //	create_tar_archive(attachment_path, "/var/log/audit");
 	create_tar_archive(attachment_path, "/home/dad/workspace_test/testmime/Debug/testmime.c");
 
-	/* Initialize the GMime library */
-//	g_mime_init();
 
 	/* 1. Create the top-level multipart/mixed container */
-	multipart = g_mime_multipart_new_with_subtype("mixed");
+	MyMessage = (char*)calloc(BUFLEN, 1);
+	strcpy(MyMessage, "");
 
 	/* 2. Create the plain text body part */
-	text_part = g_mime_text_part_new_with_subtype("plain");
-	strcpy(MyMessage, "");
+	strcat(MyMessage,"Subject: ");
+	strcat(MyMessage,tempKeyConf->Subject);
+	strcat(MyMessage,"\r\n");
+	strcat(MyMessage,"To: ");
+	strcat(MyMessage,tempKeyConf->MailTo);
+	strcat(MyMessage,"\r\n");
+	strcat(MyMessage,"From: root@");
+	strcat(MyMessage,myhostname);
+	strcat(MyMessage,"\r\n");
+	strcat(MyMessage,"MIME-Version: 1.0\r\n");
+	strcat(MyMessage,"Content-Type: multipart/mixed; boundary=\"=-mdgBb2oZDbjIrIvgh75r\"\r\n");
+	strcat(MyMessage,"\r\n");
+	strcat(MyMessage,"\r\n");
+	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
+	strcat(MyMessage,"Content-Type: text/plain; charset=us-ascii\r\n");
+	strcat(MyMessage,"Content-Transfer-Encoding: 7bit\r\n");
+	strcat(MyMessage,"Content-Disposition: inline\r\n");
+	strcat(MyMessage,"\r\n");
+
 	auparse_first_record(au);
 	sprintf(tmpstr, "%d", auparse_get_line_number(au));
 	strcat(MyMessage, "line number, file name = ");
@@ -171,71 +181,36 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 			strcat(MyMessage, "\r\n");
 		}
 	} while (auparse_next_record(au) > 0);
-	g_mime_text_part_set_text(text_part, MyMessage);
-	g_mime_object_set_header(GMIME_OBJECT(text_part), "Content-Disposition", "inline", NULL);
+	strcat(MyMessage, "\r\n");
+	strcat(MyMessage, "\r\n");
+	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
 
-	/* 3. Create the attachment part from a file using GMime 3.0 specific functions */
-	// A. Create an empty GMimePart object (default is application/octet-stream)
-	attachment_part = g_mime_part_new();
-	// B. Create a file stream to read the data from disk
-	stream = g_mime_stream_fs_open(attachment_path, O_RDONLY, 0, NULL);
-	if (!stream) {
-		audit_msg(LOG_ERR,"Error opening file stream for: %s\n", attachment_path);
-		g_object_unref(attachment_part);
-		g_mime_shutdown();
-		return EXIT_FAILURE;
-	}
+	// 3. Create the attachment part from the base64 string
+	strcat(MyMessage, "Content-Type: application/octet-stream\r\n");
+	strcat(MyMessage, "Content-Disposition: attachment; filename=audit.tar.gz\r\n");
+	strcat(MyMessage, "Content-Transfer-Encoding: base64\r\n");
+	strcat(MyMessage, "\r\n");
+	strcat(MyMessage, "\r\n");
 
-	// C. Wrap the stream in a GMimeDataWrapper.
-	// The wrapper manages the stream, it takes ownership so we don't unref 'stream' manually yet.
-	wrapper = g_mime_data_wrapper_new_with_stream(stream, GMIME_CONTENT_ENCODING_DEFAULT);
+	b64string = base64_encode_file(attachment_path, &output_len);
+	MyMessage = (char*)realloc(MyMessage, BUFLEN + output_len);
+	strcat(MyMessage, b64string);
+	free(b64string);
 
-	// D. Set the Content of the part using the wrapper
-	g_mime_part_set_content(attachment_part, wrapper);
+	strcat(MyMessage, "\r\n");
+	strcat(MyMessage, "\r\n");
+	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
 
-	// E. Set the correct MIME Type (g_mime_part_new sets default, so we override it)
-	g_mime_object_set_content_type(GMIME_OBJECT(attachment_part),
-			g_mime_content_type_new(attachment_mime_type, NULL));
 
-	// F. Set the Content-Disposition and filename
-	g_mime_object_set_header(GMIME_OBJECT(attachment_part),
-			"Content-Disposition", "attachment; filename=\"audit.tar.gz\"",
-			NULL);
-
-	// G. >>> SET THE CONTENT-TRANSFER-ENCODING TO BASE64 <<<
-	g_mime_part_set_content_encoding(attachment_part,
-			GMIME_CONTENT_ENCODING_BASE64);
-
-	// We can unref the wrapper now, the attachment_part now holds the reference.
-	g_object_unref(wrapper);
-
-	/* 4. Add the body and the attachment to the multipart container */
-	g_mime_multipart_add(multipart, GMIME_OBJECT(text_part));
-	g_mime_multipart_add(multipart, GMIME_OBJECT(attachment_part));
-
-	/* 5. Create the overall message and set headers */
-	message = g_mime_message_new(TRUE);
-	g_mime_message_set_subject(message, tempKeyConf->Subject, NULL);
-	g_mime_message_add_mailbox(message, GMIME_ADDRESS_TYPE_SENDER, NULL, "sender@example.com");
-	g_mime_message_add_mailbox(message, GMIME_ADDRESS_TYPE_SENDER, NULL, "recipient@example.com");
-
-	// Set the constructed multipart as the body of the message
-	g_mime_message_set_mime_part(message, GMIME_OBJECT(multipart));
-
-	/* 6. Serialize the message to a string for sending (e.g., via SMTP or for debugging) */
-	streamMem = g_mime_stream_mem_new();
-	message_string = g_mime_stream_mem_get_byte_array(GMIME_STREAM_MEM(streamMem));
-////	streamMem = g_mime_stream_mem_new_with_byte_array (message_string);
-	g_mime_object_write_to_stream(GMIME_OBJECT(message), NULL, streamMem);
 
 #ifdef DEBUG
 		if(debug) {
 			WinFprintf(fp9, DBGBOLDGREEN(--- Generated Email Message ---) "\n");
-			WinFprintf(fp9, "%s\n", message_string->data);
+			WinFprintf(fp9, "%s\n", MyMessage);
 			WinFprintf(fp9, DBGBOLDGREEN(--- End of Message ---) "\n");
 
 			printf("--- Generated Email Message ---\n");
-			printf("%s\n", message_string->data);
+			printf("%s\n", MyMessage);
 			printf("--- End of Message ---\n");
 			testBase64((char *)attachment_path);
 		}
@@ -297,7 +272,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	 the message-id.  */
 	smtp_set_header_option (smtpmessage, "Message-Id", Hdr_PROHIBIT, 1);
 #endif
-	smtp_set_messagecb(smtpmessage, _smtp_message_str_cb, (char *) message_string->data);
+	smtp_set_messagecb(smtpmessage, _smtp_message_str_cb, (char *) MyMessage);
 	recipient = smtp_add_recipient(smtpmessage, phConfig.LastMailTo);
 
 	/* Recipient options set here */
@@ -329,31 +304,13 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 #endif	// DEBUG
 	// Free resources consumed by the program.
 	cleanup:
-	/* 8. Clean up GMime objects */
-	g_mime_stream_flush (stream);
-	g_mime_stream_flush (streamMem);
-
-//	g_free(message_string);
-//	guint8 * somebytes = g_byte_array_free(message_string, FALSE);
-//	if(debug) {
-//		WinFprintf(fp9, "g_byte_array_free returned %p\n", somebytes);
-//	}
-//	g_free(somebytes);
+	if (MyMessage != NULL ) free(MyMessage);
 
 	// Clean up ESMTP session
 	smtp_destroy_session(session);
 	auth_destroy_context(authctx);
 	auth_client_exit();
 
-//	g_object_unref(message_string);
-//	g_byte_array_unref(message_string);
-	g_object_unref(attachment_part);
-	g_object_unref(text_part);
-	g_object_unref(multipart);
-	g_object_unref(message);
-	g_object_unref(stream);
-	g_object_unref(streamMem);
-//	g_mime_shutdown();
 
 	return EXIT_SUCCESS;
 }
@@ -649,11 +606,14 @@ int create_tar_archive(const char *archive_name, const char *folder_path) {
 
 		entry = archive_entry_new();
 		r = archive_read_next_header2(disk, entry);
-		if (r == ARCHIVE_EOF)
+		if (r == ARCHIVE_EOF) {
+			archive_entry_free(entry);
 			break;
+		}
 		if (r != ARCHIVE_OK) {
 			errmsg(archive_error_string(disk));
 			errmsg("\n");
+			archive_entry_free(entry);
 			exit(1);
 		}
 		archive_read_disk_descend(disk);
@@ -663,22 +623,24 @@ int create_tar_archive(const char *archive_name, const char *folder_path) {
 			errmsg(archive_error_string(a));
 			needcr = 1;
 		}
-		if (r == ARCHIVE_FATAL)
+		if (r == ARCHIVE_FATAL) {
+			archive_entry_free(entry);
 			exit(1);
+		}
 		if (r > ARCHIVE_FAILED) {
 #if 0
-			/* Ideally, we would be able to use
-			 * the same code to copy a body from
-			 * an archive_read_disk to an
-			 * archive_write that we use for
-			 * copying data from an archive_read
-			 * to an archive_write_disk.
-			 * Unfortunately, this doesn't quite
-			 * work yet. */
+			// Ideally, we would be able to use
+			// the same code to copy a body from
+			// an archive_read_disk to an
+			// archive_write that we use for
+			// copying data from an archive_read
+			// to an archive_write_disk.
+			// Unfortunately, this doesn't quite
+			// work yet.
 			copy_data(disk, a);
 #else
-			/* For now, we use a simpler loop to copy data
-			 * into the target archive. */
+			// For now, we use a simpler loop to copy data
+			// into the target archive.
 			fd = open(archive_entry_sourcepath(entry), O_RDONLY);
 			len = read(fd, buff, sizeof(buff));
 			while (len > 0) {
