@@ -1647,6 +1647,8 @@ void freeStatusKeyChain(ph_KeyConfig_t * chain) {
 	chain->Subject = NULL;
 	free_filterchain(chain->phFilterChain);
 	chain->phFilterChain = NULL;
+	free_formatchain(chain->phFormatChain);
+	chain->phFormatChain = NULL;
 
 	free ( chain );
 	chain = NULL;
