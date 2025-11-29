@@ -52,8 +52,10 @@ char *base64_encode_file(const char *filepath, size_t *output_len) {
 	int bytes_read;
 	size_t current_out_pos = 0;
 	unsigned long long int numlines = 0;
+#ifdef DEBUGBASE64
 	unsigned long long int lastloc = 0;
 	unsigned long long int linelen = 0;
+#endif	// DEBUGBASE64
 
 	while ((bytes_read = fread(in_buffer, 1, 3, fp)) > 0) {
 		if ( bytes_read < 0 || bytes_read > 3 ) {
@@ -65,11 +67,11 @@ char *base64_encode_file(const char *filepath, size_t *output_len) {
 			memcpy(encoded_data + current_out_pos, CRLF, 2);
 			current_out_pos += 2;
 			numlines++;
-			linelen = current_out_pos - lastloc;
 #ifdef DEBUGBASE64
+			linelen = current_out_pos - lastloc;
 			printf("linelen,numlines = %lld,%lld\n",linelen,numlines);
-#endif	// DEBUGBASE64
 			lastloc = current_out_pos;
+#endif	// DEBUGBASE64
 		}
 		encode_block(in_buffer, out_buffer, bytes_read);
 		memcpy(encoded_data + current_out_pos, out_buffer, 4);
