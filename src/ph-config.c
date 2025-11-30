@@ -173,8 +173,8 @@ static const struct nv_list format_arg[] =
   { NULL,		NOOPT }
 };
 
-/* The message mmode refers to where informational messages go
-   0 - stderr, 1 - syslog, 2 - quiet. The default is quiet. */
+// The message mmode refers to where informational messages go
+//   0 - stderr, 1 - syslog, 2 - quiet. The default is quiet.
 static message_t message_mode = MSG_QUIET;
 static debug_message_t debug_message = DBG_NO;
 static const char * defaultMTA = MTA_DEFAULT ;
@@ -214,9 +214,7 @@ void audit_msg(int priority, const char *fmt, ...)
 }
 
 
-/*
- * Set everything to its default value
-*/
+// Set everything to its default value
 void clear_phConfig(ph_config_t * pphConfig)
 {
 
@@ -257,8 +255,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 	syslog(LOG_INFO, "loading config file");
 
 	clear_phConfig(pphConfig);
-
-	/* open the file */
+	// open the file
 	rc = open(file, O_RDONLY);
 	if (rc < 0) {
 		if (errno != ENOENT) {
@@ -271,10 +268,8 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		return 0;
 	}
 	fd = rc;
-
-	/* check the file's permissions: owned by root, not world writable,
-	 * not symlink.
-	 */
+	// check the file's permissions: owned by root, not world writable,
+	// not symlink.
 	if (fstat(fd, &st) < 0) {
 		audit_msg(LOG_ERR, "Error fstat'ing config file (%s)",
 			strerror(errno));
@@ -299,8 +294,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		close(fd);
 		return 1;
 	}
-
-	/* it's ok, read line by line */
+	// it's ok, read line by line
 	f = fdopen(fd, "rm");
 	if (f == NULL) {
 		audit_msg(LOG_ERR, "Error - fdopen failed (%s)",
@@ -308,7 +302,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		close(fd);
 		return 1;
 	}
-
 	SetInputMode ( HEADER );
 	while (get_line(f, buf, sizeof(buf), &lineno, file)) {
 #ifdef DEBUG
@@ -367,7 +360,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		if(debug) WinFprintf(fp9, "nv.name, nv.value = " DBGBOLDRED(%s) "," DBGBOLDRED(%s) "\n",nv.name, nv.value);
 #endif	// DEBUG
 
-		/* identify keyword or error */
+		// identify keyword or error
 		kw = kw_lookup(nv.name);
 		if (kw->name == NULL) {
 			if ( mode != FILTER && mode != FORMAT ) {
@@ -437,7 +430,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			}
 		}
 
-		/* Check number of options */
+		// Check number of options
 		if (kw->max_options == 0 && nv.option != NULL) {
 			audit_msg(LOG_ERR,
 				"Keyword \"%s\" has invalid option "
@@ -452,7 +445,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			return 1;
 		}
 
-		/* dispatch to keyword's local parser */
+		// dispatch to keyword's local parser
 		rc = kw->parser(&nv, lineno, pphConfig);
 		if (rc != 0) {
 			fclose(f);
@@ -492,7 +485,7 @@ static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 	int too_long = 0;
 
 	while (fgets_unlocked(buf, size, f)) {
-		/* remove newline */
+		// remove newline
 		char *ptr = strchr(buf, 0x0a);
 		if (ptr) {
 			if (!too_long) {
@@ -518,7 +511,7 @@ static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 
 static int nv_split(char *buf, struct nv_pair *nv)
 {
-	/* Get the name part */
+	// Get the name part
 	char *ptr;
 	char * chdummy;
 	int idummy;
@@ -535,31 +528,21 @@ static int nv_split(char *buf, struct nv_pair *nv)
 	if ( strlen(buf) == 0 ) return 0; // If there's nothing, go to next line
 	if ( (WhitespaceSpan(buf)) == strlen(buf) ) return 0; // If it's a all blank line, go to next line
 	if ( buf[0] == '#' ) return 0; // If there's a comment, go to next line
-
 	int iret = nv_deesc(buf, &(nv->name), &(nv->name_len), &ptr);
 	if ( iret == -1 ) return 4;
-
-///////////////////////////////////////////////////////////////////
 	// Check for a '=', if found, we will skip over it
 	if ( *ptr == '=' ) ptr = memmove( ptr, ptr+1 , strlen(ptr+1) + 1 );
-
-
-	/* get the value */
+	// get the value
 	iret = nv_deesc(ptr, &(nv->value), &(nv->value_len), &ptr);
 	if ( iret == -1 ) return 4;
-
-
-	/* See if there's an option */
+	// See if there's an option
 	iret = nv_deesc(ptr, &(nv->option), &(nv->option_len), &ptr);
 	if ( iret == -1 ) return 4;
 	if ( iret == -2 ) return 0; // no option, that's ok
-
-
-	/* Make sure there's nothing else */
+	// Make sure there's nothing else
 	iret = nv_deesc(ptr, &chdummy, &idummy, &ptr);
 	if ( iret > -1 ) return 1;
-
-	/* Everything is OK */
+	// Everything is OK
 	return 0;
 }
 
@@ -1422,14 +1405,12 @@ static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 }
 
 
-/*
- * This function is where we do the integrated check of the audispd config
- * options. At this point, all fields have been read. Returns 0 if no
- * problems and 1 if problems detected.
- */
+// This function is where we do the integrated check of the audispd config
+// options. At this point, all fields have been read. Returns 0 if no
+// problems and 1 if problems detected.
 static int sanity_check(ph_config_t *config, const char *file)
 {
-	/* Error checking */
+	// Error checking
 /*	if (config->active == A_YES) {
 		struct stat buf;
 
@@ -1709,19 +1690,6 @@ static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
 	}
 	*ptr = buf;
 	if ( **ptr == '\000' ) return -2;
-
-	/*
-	if first char is a *, skip over it and...
-	look for either a \ or "
-	if the " comes next it is oes (done)
-	if the \ comes next copy over it, skip over the first letter copied & continue search
-	if neither found, no matching " !
-
-	if first char is not a *...
-	look for either a \ or " "
-	if a " " is found or neither is found, it is eos (done)
-	if the \ comes next copy over it, skip over the first letter copied & continue search
-*/
 	if ( **ptr == '"' ) {
 		// first character is a double quote, find the matching double quote
 		(*ptr)++;

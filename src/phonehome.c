@@ -219,7 +219,7 @@ int main(int argc, const char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	/* Register sighandlers */
+	// Register sighandlers
 	sa.sa_flags = 0;
 	iret = sigemptyset(&sa.sa_mask);
 #ifdef DEBUG
@@ -227,7 +227,7 @@ int main(int argc, const char *argv[])
 		if (iret) WinFprintf(fp9, "sigemptyset " DBGBOLDRED(failed) " for sa.sa_mask with %s\n",strerror(errno));
 	}
 #endif	// DEBUG
-	/* Set handler for the ones we care about */
+	// Set handler for the ones we care about
 	sa.sa_handler = term_handler;
 	iret = sigaction(SIGTERM, &sa, NULL);
 #ifdef DEBUG
@@ -323,7 +323,7 @@ int main(int argc, const char *argv[])
 #endif	// DEBUG
 //		    continue;
 		}
-		/* Now the event loop */
+		// Now the event loop
 		 if (!stop && !hup && retval > 0) {
 #ifdef DEBUG
 	    	if(debug) WinFprintf(fp9, "process an event\n");
@@ -378,9 +378,7 @@ int main(int argc, const char *argv[])
 }
 
 
-/*
- * SIGTERM handler
- */
+// SIGTERM handler
 static void term_handler( int sig )
 {
         stop = 1;
@@ -388,9 +386,7 @@ static void term_handler( int sig )
 }
 
 
-/*
- * SIGHUP handler: re-read config
- */
+// SIGHUP handler: re-read config
 static void hup_handler( int sig )
 {
         hup = 1;
@@ -413,12 +409,10 @@ static int init_ph(int argc, const char *argv[])
 		myhostname = "localhost";
 		audit_msg(LOG_WARNING, "Error getting hostname at line %i in %s because %s", __LINE__, __FILE__, strerror(errno));
 	}
-    /*
-      * the main program accepts a single (optional) argument:
-      * it's configuration file (this is NOT the plugin configuration
-      * usually located at /etc/audit/plugins.d)
-      * We use the default (def_config_file) if no arguments are given
-      */
+    // the main program accepts a single (optional) argument:
+    // it's configuration file (this is NOT the plugin configuration
+    // usually located at /etc/audit/plugins.d)
+    // We use the default (def_config_file) if no arguments are given
 	if (argc == 1) {
 		cpath = (char *)DefaultConfigPath;
 		syslog(LOG_WARNING, "No configuration file specified - using default (%s)", cpath);
@@ -485,7 +479,7 @@ static int init_ph(int argc, const char *argv[])
 	}
 	auparse_set_eoe_timeout(2);
 	auparse_add_callback(au, handle_read_event, NULL, NULL);
-	/* Initialize the GMime library */
+	// Initialize the GMime library
 	return 0;
 }
 
@@ -550,8 +544,8 @@ static void dump_fields_of_record(auparse_state_t *au)
 		WinFprintf(fp9, DBGBOLDRED(Error getting time stamp - aborting) "\n");
 		return;
 	}
-	/* Note that e->sec can be treated as time_t data if you want
-	 * something a little more readable */
+	// Note that e->sec can be treated as time_t data if you want
+	// something a little more readable
 	EventTime = auparse_get_time(au);
 	timeinfo = localtime(&EventTime);
 	// Format the time into a string

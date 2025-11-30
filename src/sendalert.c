@@ -94,7 +94,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 
 	const char *TarFileName = "audit.tar.gz";
 	char *attachment_path = NULL;
-//	const char *attachment_mime_type = "application/x-tar";
+//	const char *attachment_mime_type = "application/x-tar";           /////////////  should we be using this instead???
 	ph_FormatChain_t *tempFormatChain = NULL;
 	ph_Type_Chain_t * tempTypeChain = NULL;
 	ph_Chain_t * TempFieldChain = NULL;
@@ -165,11 +165,11 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	//	create_tar_archive(attachment_path, "/home/dad/workspace_test/testmime/Debug/testmime.c");
 	}
 
-	/* 1. Create the top-level multipart/mixed container */
+	// 1. Create the top-level multipart/mixed container
 	MyMessage = (char*)calloc(BUFLEN, 1);
 	strcpy(MyMessage, "");
 
-	/* 2. Create the plain text body part */
+	// 2. Create the plain text body part
 	strcat(MyMessage,"Subject: ");
 	strcat(MyMessage,tempKeyConf->Subject);
 	strcat(MyMessage,"\r\n");
@@ -256,14 +256,11 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 #endif	// DEBUG
 					continue; // no match read the next record
 				}
-				// the type matches, tempTypeChain will now be pointing to the matching stuct
-//				tempTypeChain->Used = 1;	// mark it as used ("checked")   ///////////////////////////////////////////?????
 				// check for field matches
 				if ( tempTypeChain->FieldHashArray == NULL ) {
 #ifdef DEBUG
 					if(debug) WinFprintf(fp9, "match found but no fields specified for this record type\n");
 #endif	// DEBUG
-//					tempTypeChain->matches = matches = 1;     ///////////////////////////////////////////?????
 					matches = 1;	// suppress full event dump
 					continue; // no fields specified on this type record in our filter... it matches! - but continue checking records
 				}
@@ -316,7 +313,6 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 #endif	// DEBUG
 						return EXIT_FAILURE;
 					}
-//					(tempTypeChain->FieldMaskArray[TempFieldChain->MatchMaskIndex]) = tempTypeChain->FieldMaskArray[TempFieldChain->MatchMaskIndex] | TempFieldChain->MatchMask; ///////////////////////////////////////////?????
 #ifdef DEBUG
 					if(debug) WinFprintf(fp9, "wrote (" DBGBOLDGREEN(%s) " = " DBGBOLDGREEN(%s) " to message\n", fname, fval);
 #endif	// DEBUG
@@ -327,25 +323,11 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 				if(debug) WinFprintf(fp9, "get next record\n");
 #endif	// DEBUG
 			} while (auparse_next_record(au) > 0 );
-////////////////////////////////////////////////////////////////////////////////
 		} while ( ( tempFormatChain = tempFormatChain->next ) != NULL );
 	} else {
 		FormatFullEvent = 1;	// no format chain -> dump it all...
 	}
 	if ( !matches ) FormatFullEvent = 1;	// no formats matched -> dump it all...
-
-
-
-
-
-
-
-
-
-
-
-
-
 		// check for if we are to include the full event report in the message
 	if ( FormatFullEvent ) {
 		auparse_first_record(au);	// make sure we are still on the first record
@@ -358,11 +340,9 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 			}
 		} while (auparse_next_record(au) > 0);
 	}
-
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
-
 	if ( AttachLogs ) {
 		// 3. Create the attachment part from the base64 string
 		strcat(MyMessage, "Content-Type: application/octet-stream\r\n");
@@ -383,8 +363,6 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		strcat(MyMessage, "\r\n");
 		strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
 	}
-
-
 #ifdef DEBUG
 		if(debug) {
 			WinFprintf(fp9, DBGBOLDGREEN(--- Generated Email Message ---) "\n");
@@ -400,9 +378,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 			printf("--- End of Message ---\n");
 		}
 #endif	// DEBUG
-
-	// This program sends only one message at a time.  Create an SMTP
-	// session and add a message to it.
+	// Create an SMTP session and add a message to it.
 	auth_client_init();
 	session = smtp_create_session();
 	if (session == NULL) {
@@ -410,68 +386,54 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		goto cleanup;
 	}
 	smtpmessage = smtp_add_message(session);
-
-	/* NB.  libESMTP sets timeouts as it progresses through the protocol.
-	 In addition the remote server might close its socket on a timeout.
-	 Consequently libESMTP may sometimes try to write to a socket with
-	 no reader.  Ignore SIGPIPE, then the program doesn't get killed
-	 if/when this happens. */
+	//  libESMTP sets timeouts as it progresses through the protocol.
+	// In addition the remote server might close its socket on a timeout.
+	// Consequently libESMTP may sometimes try to write to a socket with
+	// no reader.  Ignore SIGPIPE, then the program doesn't get killed
+	// if/when this happens.
 	sa.sa_handler = SIG_IGN;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	sigaction(SIGPIPE, &sa, NULL);
-
-	/* Set the host running the SMTP server.  LibESMTP has a default port
-	 number of 587, however this is not widely deployed so the port
-	 is specified as 25 along with the default MTA host. */
+	// Set the host running the SMTP server.  LibESMTP has a default port
+	// number of 587, however this is not widely deployed so the port
+	// is specified as 25 along with the default MTA host.
 	if (phConfig.MTA != NULL) host = phConfig.MTA;
 	smtp_set_server(session, host ? host : "localhost:25");
-
-	/* Do what's needed at application level to use authentication.
-	 */
+	// Do what's needed at application level to use authentication.
 	authctx = auth_create_context();
 	auth_set_mechanism_flags(authctx, AUTH_PLUGIN_PLAIN, 0);
 	auth_set_interact_cb(authctx, authinteract, NULL);
-
-	/* Use our callback for X.509 certificate passwords.  If STARTTLS is
-	 not in use or disabled in configure, the following is harmless. */
+	// Use our callback for X.509 certificate passwords.  If STARTTLS is
+	// not in use or disabled in configure, the following is harmless.
 	smtp_starttls_set_password_cb(tlsinteract, NULL);
 	smtp_set_eventcb(session, event_cb, NULL);
-
-	/* Now tell libESMTP it can use the SMTP AUTH extension.
-	 */
+	// Now tell libESMTP it can use the SMTP AUTH extension.
 	if (!noauth)
 		smtp_auth_set_context(session, authctx);
-
-	/* Set the reverse path for the mail envelope.  (NULL is ok)
-	 */
+	// Set the reverse path for the mail envelope.  (NULL is ok)
 	smtp_set_reverse_path(smtpmessage, from);
-
 #if 0
-	/* The message-id is OPTIONAL but SHOULD be present.  By default
-	 libESMTP supplies one.  If this is not desirable, the following
-	 prevents one making its way to the server.
-	 N.B. It is not possible to prohibit REQUIRED headers.  Furthermore,
-	 the submission server will probably add a Message-ID header,
-	 so this cannot prevent the delivered message from containing
-	 the message-id.  */
+	// The message-id is OPTIONAL but SHOULD be present.  By default
+	// libESMTP supplies one.  If this is not desirable, the following
+	// prevents one making its way to the server.
+	// N.B. It is not possible to prohibit REQUIRED headers.  Furthermore,
+	// the submission server will probably add a Message-ID header,
+	// so this cannot prevent the delivered message from containing
+	// the message-id.
 	smtp_set_header_option (smtpmessage, "Message-Id", Hdr_PROHIBIT, 1);
 #endif
 	smtp_set_messagecb(smtpmessage, _smtp_message_str_cb, (char *) MyMessage);
 	recipient = smtp_add_recipient(smtpmessage, phConfig.LastMailTo);
-
-	/* Recipient options set here */
+	// Recipient options set here
 	if (notify != Notify_NOTSET) smtp_dsn_set_notify(recipient, notify);
-
-	/* Initiate a connection to the SMTP server and transfer the
-	 message. */
+	// Initiate a connection to the SMTP server and transfer the  message.
 	if (!smtp_start_session(session)) {
 		char buf[128];
 		audit_msg(LOG_ERR,"SMTP server problem %s",
 				smtp_strerror(smtp_errno(), buf, sizeof buf));
 	} else {
-		/* Report on the success or otherwise of the mail transfer.
-		 */
+		// Report on the success or otherwise of the mail transfer.
 #ifdef DEBUG
 		status = smtp_message_transfer_status(smtpmessage);
 		if(debug) {
@@ -487,21 +449,20 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 		WinFprintf(fp9, "Message successfully sent using libesmtp!\n");
 	}
 #endif	// DEBUG
-	// Free resources consumed by the program.
-	cleanup:
-	if (MyMessage != NULL ) free(MyMessage);
 
+	// Free resources consumed by the program.
+cleanup:
+	if (MyMessage != NULL ) free(MyMessage);
 	// Clean up ESMTP session
 	smtp_destroy_session(session);
 	if ( authctx != NULL ) auth_destroy_context(authctx);
 	auth_client_exit();
 
-
 	return EXIT_SUCCESS;
 }
 
 
-/* Callback to prnt the recipient status */
+// Callback to prnt the recipient status
 void print_recipient_status (smtp_recipient_t recipient,const char *mailbox, void *arg unused)
 {
 #ifdef DEBUG
@@ -534,7 +495,7 @@ void monitor_cb (const char *buf, int buflen, int writing, void *arg)
 }
 
 
-/* Callback to request user/password info.  Not thread safe. */
+// Callback to request user/password info.  Not thread safe.
 int authinteract (auth_client_request_t request, char **result, int fields, void *arg unused)
 {
 	char prompt[64];
@@ -663,7 +624,7 @@ int handle_invalid_peer_certificate(long vfy_result) {
 		break;
 	}
 	printf("SMTP_EV_INVALID_PEER_CERTIFICATE: %ld: %s\n", vfy_result, k);
-	return 1; /* Accept the problem */
+	return 1; // Accept the problem
 }
 
 void event_cb(smtp_session_t session unused, int event_no, void *arg, ...) {
@@ -814,18 +775,13 @@ int create_tar_archive(const char *archive_name, const char *folder_path) {
 		}
 		if (r > ARCHIVE_FAILED) {
 #if 0
-			// Ideally, we would be able to use
-			// the same code to copy a body from
-			// an archive_read_disk to an
-			// archive_write that we use for
-			// copying data from an archive_read
-			// to an archive_write_disk.
-			// Unfortunately, this doesn't quite
-			// work yet.
+			// Ideally, we would be able to use the same code to copy a body from
+			// an archive_read_disk to an archive_write that we use for
+			// copying data from an archive_read to an archive_write_disk.
+			// Unfortunately, this doesn't quite work yet.
 			copy_data(disk, a);
 #else
-			// For now, we use a simpler loop to copy data
-			// into the target archive.
+			// For now, we use a simpler loop to copy data into the target archive.
 			fd = open(archive_entry_sourcepath(entry), O_RDONLY);
 			len = read(fd, buff, sizeof(buff));
 			while (len > 0) {

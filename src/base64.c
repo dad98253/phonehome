@@ -27,26 +27,21 @@ char *base64_encode_file(const char *filepath, size_t *output_len) {
 		perror("Error opening file");
 		return NULL;
 	}
-
 	// Determine file size
 	fseek(fp, 0, SEEK_END);
 	long file_size = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
-
 	// Calculate required output buffer size
-	// (file_size / 3) * 4 + potential padding + null terminator
 	size_t numEncodedBytes = (file_size + 2) / 3 * 4; // (max)
 	size_t numLines = (file_size + 3) / 3 * 4 / 76 + 1;
 	size_t padding = 20;
 	size_t encoded_buffer_size = numEncodedBytes + numLines * 2 + padding;
-
 	char *encoded_data = (char *)calloc(encoded_buffer_size, 1);
 	if (!encoded_data) {
 		perror("Error allocating memory");
 		fclose(fp);
 		return NULL;
 	}
-
 	unsigned char in_buffer[3];
 	unsigned char out_buffer[4];
 	int bytes_read;
@@ -56,7 +51,6 @@ char *base64_encode_file(const char *filepath, size_t *output_len) {
 	unsigned long long int lastloc = 0;
 	unsigned long long int linelen = 0;
 #endif	// DEBUGBASE64
-
 	while ((bytes_read = fread(in_buffer, 1, 3, fp)) > 0) {
 		if ( bytes_read < 0 || bytes_read > 3 ) {
 			perror("bad number of bytes returned while reading tar file");
