@@ -71,9 +71,9 @@ extern int WinFprintf(FILE *hf, const char * fmt,...);
 #define IFNULL(ptr) ((ptr) == NULL ? "-null-" : (ptr))
 
 extern int IsValidEmail(const char *email);
+extern int parse_words(const char *buf, char ***args);
 
 static char *get_line(FILE *f, char *buf, unsigned size, int *lineno, const char *file);
-static int nv_split(char *buf, struct nv_pair *nv);
 static struct kw_pair *kw_lookup(const char *val);
 static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int logdir_parser(struct nv_pair *nv, int line, ph_config_t *config);
@@ -88,8 +88,6 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int sanity_check(ph_config_t *config, const char *file);
-static char* valid_keywords( char **string );
-static int nv_deesc(char *buf, char **name, int * name_len, char **ptr);
 static void SetInputMode(modes newmode);
 static int kw_unsetMask();
 int nv_lookup_name ( const nv_list_t *nv, char * myname );
@@ -105,6 +103,7 @@ ph_Chain_t * TailofFieldChain(ph_Chain_t * phFieldChain);
 static ph_KeyConfig_t * TailofStatusKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Type_Chain_t * TailofStatusTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Chain_t * TailofStatusFieldChain(ph_Chain_t * phFieldChain);
+static void freeargs( char **args, int nargs );
 void free_chain(ph_Chain_t * chain);
 void free_filterchain(ph_FilterChain_t * chain);
 void freeStatusFieldChain(ph_Chain_t * chain);
@@ -165,12 +164,31 @@ static const struct nv_list filter_arg[] =
 
 static const struct nv_list format_arg[] =
 {
-  {"macro",		FORMACRO },
   {"include",	FORINCLUDE },
-  {"exclude",	FOREXCLUDE },
   {"logs",		FORLOGS },
   {"end",		FOREND },
   { NULL,		NOOPT }
+};
+
+static const struct nv_list operator_arg[] =
+{
+  {"==",	OPREQUAL },
+  {"=",		OPREQUAL },
+  {"!=",	OPRNOTEQUAL },
+  {">",		OPRGREATERTHAN },
+  {"<",		OPRLESSTHAN },
+  {">=",	OPRGREATERTHANOREQUAL },
+  {"<=",	OPRLESSTHANOREQUAL },
+  {":=",	OPRREGEX },
+  { NULL,	NOOPT }
+};
+
+static const struct nv_list option_arg[] =
+{
+  {"?",		OPTINTERP },
+  {"#",		OPTEVAL },
+  {"~",		OPTQUOTE },
+  { NULL,	NOOPT }
 };
 
 // The message mmode refers to where informational messages go
@@ -250,7 +268,9 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 	struct nv_pair nv;
 	FILE *f;
 	char buf[160];
-	char *tmpString;
+//	char *tmpString;
+	char **args = NULL;
+	int i;
 
 	syslog(LOG_INFO, "loading config file");
 
@@ -305,57 +325,99 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 	SetInputMode ( HEADER );
 	while (get_line(f, buf, sizeof(buf), &lineno, file)) {
 #ifdef DEBUG
-		if(debug) WinFprintf(fp9, "config line %i: " DBGBOLDYELLOW(%s) "\n",lineno, buf);
+		if(debug) WinFprintf(fp9, "config line %i: " DBGBOLDYELLOW(%s) "\n", lineno, buf);
 #endif	// DEBUG
 		// convert line into name-value pair
-		nv.name = NULL;
-		nv.value = NULL;
-		nv.option = NULL;
-		rc = nv_split(buf, &nv);
+		int nargs = parse_words(buf, &args);
 #ifdef DEBUG
-		if(debug) WinFprintf(fp9, "rc =  " DBGBOLDRED(%i) "\n",rc);
-#endif	// DEBUG
-		switch (rc) {
-			case 0: // fine
-				break;
-			case 1: // not the right number of tokens.
-				audit_msg(LOG_ERR,
-				"Wrong number of arguments for line %d in %s",
-					lineno, file);
-				break;
-			case 2: // no '=' sign
-				audit_msg(LOG_ERR,
-					"Missing equal sign for line %d in %s",
-					lineno, file);
-				break;
-			case 3: // masked keyword
-				audit_msg(LOG_ERR,
-					"Out of order keyword for line %d in %s",
-					lineno, file);
-				audit_msg(LOG_ERR,
-					"The permitted keywords in this context are: %s",
-					valid_keywords(&tmpString));
-					free(tmpString);
-				break;
-			case 4: // no matching "
-				audit_msg(LOG_ERR,
-					"No matching end quote for line %d in %s",
-					lineno, file);
-				break;
-			default: // something else went wrong...
-				audit_msg(LOG_ERR,
-					"Unknown error for line %d in %s",
-					lineno, file);
-				break;
+		if(debug)  {
+			WinFprintf(fp9, "parse_words returned " DBGBOLDRED(%i) "\n", nargs);
+			if ( nargs > 0 ) {
+				for (i = 0;i < nargs; i++) {
+					if ( args[i] != NULL ) WinFprintf(fp9, "arg " DBGBOLDGREEN(%i) " == " DBGBOLDCYAN(%s) "\n", i, args[i]);
+				}
+			}
 		}
-		if (nv.name == NULL) {
-			lineno++;
+#endif	// DEBUG
+		if ( nargs == 0 ) continue;
+		if ( nargs < 0 ) return 1;
+		if ( nargs > 4 ) {
+			audit_msg(LOG_ERR, "Error - too many arguments on line %i in config file (%s) - ignoring", lineno , buf);
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, "too many arguments on line " DBGBOLDGREEN(%i) " : " DBGBOLDRED(%s) "\n", lineno, buf);
+#endif	// DEBUG
+			freeargs( args, nargs );
 			continue;
 		}
-		if (nv.value == NULL) {
-			fclose(f);
-			return 1;
+		// determine if operators or options are specified
+		int valIndex = 1;
+		int valOperator = 0;
+		int valOption = 0;
+		operator_t operator = NOOPT;
+		options_t option = NOOPT;
+		if ( nargs == 4 ) { // we have both an operator and an option
+			valOperator = 1;
+			valIndex = 2;
+			valOption = 3;
+		} else if ( nargs == 3 ) { // either args[1] is an operator or args[2] is an option - can't have both
+			if ( nv_lookup_name ( operator_arg, args[1] ) != NOOPT ) {
+				valOperator = 1;
+				valIndex = 2;
+			} else if ( nv_lookup_name ( option_arg, args[2] ) != NOOPT ) {
+				valOption = 2;
+			}
+		} // nargs < 3 ==> neither an option or operator is specified
+		if ( nargs > 2 && valOperator == 0 && valOption == 0 ) {
+			audit_msg(LOG_ERR, "syntax error on line %i in config file (%s) - ignoring", lineno , buf);
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(syntax error on line %1) " in config file " DBGBOLDCYAN(%s) "\n", lineno, buf);
+#endif	// DEBUG
+			freeargs( args, nargs );
+			continue;
 		}
+		// validate the operator
+		if ( valOperator == 0 ) {
+			operator = OPREQUAL;
+		} else {
+			operator = nv_lookup_name ( operator_arg, args[valOperator] );
+			free ( args[valOperator] );
+			args[valOperator] = NULL;
+		}
+		if ( operator == NOOPT ) {
+			audit_msg(LOG_ERR, "Error - unrecognized operator (\"%s\") on line %i in config file - ignoring line", args[valOperator], lineno);
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized operator %s) "on line " DBGBOLDCYAN(%i) "\n", args[valOperator], lineno);
+#endif	// DEBUG
+			freeargs( args, nargs );
+			continue;
+		}
+		// validate the option
+		if ( valOption == 0 ) {
+			option = OPTINTERP;
+		} else {
+			option = nv_lookup_name ( option_arg, args[valOption] );
+			free ( args[valOption] );
+			args[valOption] = NULL;
+		}
+		if ( option == NOOPT ) {
+			audit_msg(LOG_ERR, "Error - unrecognized option (\"%s\") on line %i in config file - ignoring line", args[valOption], lineno);
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized option %s) "on line " DBGBOLDCYAN(%i) "\n", args[valOption], lineno);
+#endif	// DEBUG
+			freeargs( args, nargs );
+			continue;
+		}
+
+		nv.name = args[0];
+		args[0] = NULL;	// keep freeargs from freeing this string
+		nv.name_len = strlen(nv.name);
+		nv.value = args[valIndex];
+		args[valIndex] = NULL;	// keep freeargs from freeing this string
+		nv.value_len = strlen(nv.value);
+		nv.option = option;
+		nv.operator = operator;
+		freeargs( args, nargs );	// free all of the stuff malloc'ed in parse_words that we don't need any more
+
 #ifdef DEBUG
 		if(debug) WinFprintf(fp9, "nv.name, nv.value = " DBGBOLDRED(%s) "," DBGBOLDRED(%s) "\n",nv.name, nv.value);
 #endif	// DEBUG
@@ -431,19 +493,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		}
 
 		// Check number of options
-		if (kw->max_options == 0 && nv.option != NULL) {
-			audit_msg(LOG_ERR,
-				"Keyword \"%s\" has invalid option "
-				"\"%s\" in line %d of %s",
-				nv.name, nv.option, lineno, file);
-#ifdef DEBUG
-			if(debug) WinFprintf(fp9, "Keyword \"%s\" has invalid option "
-					"\"%s\" in line %d of %s\n",
-					nv.name, nv.option, lineno, file);
-#endif	// DEBUG
-			fclose(f);
-			return 1;
-		}
 
 		// dispatch to keyword's local parser
 		rc = kw->parser(&nv, lineno, pphConfig);
@@ -457,8 +506,6 @@ Nextline:	// if a filter or format definition statement was processed, the logic
 		nv.name = NULL;
 		if ( nv.value != NULL ) free(nv.value);
 		nv.value = NULL;
-		if ( nv.option != NULL ) free(nv.option);
-		nv.option = NULL;
 		lineno++;
 	}
 
@@ -506,44 +553,6 @@ static char *get_line(FILE *f, char *buf, unsigned size, int *lineno,
 		}
 	}
 	return NULL;
-}
-
-
-static int nv_split(char *buf, struct nv_pair *nv)
-{
-	// Get the name part
-	char *ptr;
-	char * chdummy;
-	int idummy;
-
-	if ( buf == NULL ) return 5;
-	if ( nv == NULL ) return 5;
-	nv->name = NULL;
-	nv->value = NULL;
-	nv->option = NULL;
-	nv->name_len = 0;
-	nv->value_len = 0;
-	nv->option_len = 0;
-
-	if ( strlen(buf) == 0 ) return 0; // If there's nothing, go to next line
-	if ( (WhitespaceSpan(buf)) == strlen(buf) ) return 0; // If it's a all blank line, go to next line
-	if ( buf[0] == '#' ) return 0; // If there's a comment, go to next line
-	int iret = nv_deesc(buf, &(nv->name), &(nv->name_len), &ptr);
-	if ( iret == -1 ) return 4;
-	// Check for a '=', if found, we will skip over it
-	if ( *ptr == '=' ) ptr = memmove( ptr, ptr+1 , strlen(ptr+1) + 1 );
-	// get the value
-	iret = nv_deesc(ptr, &(nv->value), &(nv->value_len), &ptr);
-	if ( iret == -1 ) return 4;
-	// See if there's an option
-	iret = nv_deesc(ptr, &(nv->option), &(nv->option_len), &ptr);
-	if ( iret == -1 ) return 4;
-	if ( iret == -2 ) return 0; // no option, that's ok
-	// Make sure there's nothing else
-	iret = nv_deesc(ptr, &chdummy, &idummy, &ptr);
-	if ( iret > -1 ) return 1;
-	// Everything is OK
-	return 0;
 }
 
 
@@ -1638,12 +1647,6 @@ void freeStatusKeyChain(ph_KeyConfig_t * chain) {
 }
 
 
-static char* valid_keywords( char **string ) {
-	*string = (char *)malloc(2);
-	**string = '\000';
-	return (*string);
-}
-
 int WhitespaceSpan(char* str) {
 	int iret = 0;
     if (str == NULL) {
@@ -1656,82 +1659,6 @@ int WhitespaceSpan(char* str) {
     return iret;
 }
 
-
-static int nv_deesc(char *buf, char **name, int * name_len, char **ptr) {
-// this function identifies strings enclosed in double quotes as well as escaped characters
-// since all escaped characters start with a "\" (backslash), it is simply removed and the
-// scan starts again after the next character.
-// it then looks for either a whitespace (indicating a field delimiter) or end of string
-// a side effect of this process is that tabs contained within a quoted string will be
-// "de-escaped" and returned as a "t".
-//
-// buf:			the input buffer - it will not be changed
-// name:		the next label field found - a new string will be allocated - ends up in nv.
-// name_len:	the length of the above string - ends up in nv.
-// ptr:			the pointer to the next (unprocessed) character in buf when we are done
-// returns the value of name_len on success, various negative values on errors
-
-	int fldlen = 0;
-	char * strStart;
-	char * tmptr;
-	int isizews;
-	int lensubstr;
-
-	if ( (isizews = WhitespaceSpan(buf)) == strlen(buf) ) {
-		// all whitespace - zero len buf .. should be impossible
-		*buf = '\000';
-	} else {
-		if ( isizews ) {
-			// move non white to front of string
-			lensubstr = strlen(buf+isizews);
-			memmove(buf, buf+isizews, lensubstr );
-			*(buf+lensubstr) = '\000';
-		}
-	}
-	*ptr = buf;
-	if ( **ptr == '\000' ) return -2;
-	if ( **ptr == '"' ) {
-		// first character is a double quote, find the matching double quote
-		(*ptr)++;
-		strStart = *ptr;
-		while(1) {
-			if ( (tmptr = strpbrk(*ptr, "\\\"")) == NULL ) return -1;
-			if ( *tmptr == '\"' ) { // matching " found
-				fldlen = (int)(tmptr - strStart );
-				memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // remove the closing " in case we are not done
-				break;
-			}
-			*ptr = memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // found a \ .. un-escape it
-		}
-	} else {
-		// not a quoted string... de-escape it and find the next blank
-		strStart = *ptr;
-		while(1) {
-			if ( (tmptr = strpbrk(*ptr, "\\ \t")) == NULL ) { // end of string found
-				fldlen = strlen(*ptr);
-				break;
-			}
-			if ( *tmptr == ' ' || *tmptr == '\t') { // blank space found
-				fldlen = (int)(tmptr - strStart );
-				break;
-			}
-			*ptr = memmove( tmptr, tmptr+1 , strlen(tmptr+1) + 1 ); // found a \ .. un-escape it
-		}
-	}
-
-	if (fldlen) {
-		*name = (char*)malloc(fldlen+1);	// allocate a string for name (ends up in nv.name)
-		strncpy(*name,strStart,fldlen);
-		*(*name+fldlen) = '\000';
-	} else {
-		*name = (char*)malloc(1);	// allocate a zero length string for name
-		*(*name) = '\000';
-	}
-	*name_len = fldlen;
-	(*ptr)+=fldlen;
-	*ptr = *ptr+WhitespaceSpan(*ptr);
-	return fldlen;
-}
 
 static int kw_unsetMask() {
 	int i = 0;
@@ -1889,6 +1816,20 @@ ph_Chain_t * TailofStatusFieldChain(ph_Chain_t * phFieldChain) {
 			return ( TailofStatusFieldChain( phFieldChain->StatusFieldChainNext ) );
 		}
 }
+
+static void freeargs( char **args, int nargs ) {
+	if ( nargs > 0 ) {
+		for (int i = 0;i < nargs; i++) {
+			if ( args[i] != NULL ) free ( args[i] );
+		}
+	}
+	if ( args != NULL ) free ( args );
+	args = NULL;
+	return;
+}
+
+
+
 #ifdef DEBUG
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray ) {
 	if( !debug ) return;

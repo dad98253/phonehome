@@ -98,7 +98,9 @@
 
 typedef enum { DEFPASS, DEFREJECT } default_t;
 typedef enum { FILPASS, FILREJECT, FILEND } filter_t;
-typedef enum { FORMACRO, FORINCLUDE, FOREXCLUDE, FORLOGS, FOREND } format_t;
+typedef enum { FORINCLUDE, FORLOGS, FOREND } format_t;
+typedef enum { OPREQUAL, OPRNOTEQUAL, OPRGREATERTHAN, OPRLESSTHAN, OPRGREATERTHANOREQUAL, OPRLESSTHANOREQUAL, OPRREGEX } operator_t;
+typedef enum { OPTINTERP, OPTEVAL, OPTQUOTE } options_t;
 
 typedef struct ph_config
 {
@@ -152,6 +154,22 @@ typedef struct ph_FilterChain
 	struct	ph_FilterChain * next;
 } ph_FilterChain_t;
 
+typedef struct ph_FormatChain
+{
+	char *	label;	// ??
+	char *	value;	// ??
+	int		AttachLogs;							// attach a tar file of the audit log files
+	int		IncludeOrExclude;
+	int		TypeHashSize;
+	struct	ph_Type_Chain * DefaultTypeChain;	// (optional) if field format are
+												// defined prior to a record type
+												// definition, they are saved here
+	struct	ph_Type_Chain ** TypeHashArray;
+	struct	ph_Type_Chain * AllTypeChainHead;	// points to a chain of all Record
+												// Types included in this filter segment
+	struct	ph_FormatChain * next;
+} ph_FormatChain_t;
+
 typedef struct ph_Type_Chain
 {
 	char *	Name;	// the user friendly name for the record type
@@ -182,12 +200,14 @@ typedef struct ph_Type_Chain
 
 typedef struct ph_Chain
 {
-	char *	label;
-	int		Type;
-	char *	value;
-	int		FieldID;
-	int		PassOrReject;
-	int		MatchMaskIndex;		// used in event evaluation to reference the appropriate
+	char *		label;
+	int			Type;
+	char *		value;
+	int			FieldID;
+	operator_t	operator;			// the (optional) operator (used for filters only)
+	options_t	option;				// the (optional) options (used in filters and formats)
+	int			PassOrReject;
+	int			MatchMaskIndex;		// used in event evaluation to reference the appropriate
 								// match mask back in the type struct
 	unsigned long long int MatchMask;	// the mask used at the above index
 	struct	ph_Type_Chain * ParentTypeRecord;	// used event evaluation to reference
@@ -195,22 +215,6 @@ typedef struct ph_Chain
 	struct	ph_Chain * next;
 	struct	ph_Chain * StatusFieldChainNext;	// helpful link for cleanup
 } ph_Chain_t;
-
-typedef struct ph_FormatChain
-{
-	char *	label;	// ??
-	char *	value;	// ??
-	int		AttachLogs;							// attach a tar file of the audit log files
-	int		IncludeOrExclude;
-	int		TypeHashSize;
-	struct	ph_Type_Chain * DefaultTypeChain;	// (optional) if field format are
-												// defined prior to a record type
-												// definition, they are saved here
-	struct	ph_Type_Chain ** TypeHashArray;
-	struct	ph_Type_Chain * AllTypeChainHead;	// points to a chain of all Record
-												// Types included in this filter segment
-	struct	ph_FormatChain * next;
-} ph_FormatChain_t;
 
 typedef struct nv_list
 {
@@ -222,7 +226,9 @@ typedef struct nv_pair
 {
 	char *name;
 	char *value;
-	char *option;
+//	char *option;
+	operator_t operator;
+	options_t option;
 	int name_len;
 	int value_len;
 	int option_len;
