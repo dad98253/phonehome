@@ -104,6 +104,7 @@ static ph_KeyConfig_t * TailofStatusKeyConfig(ph_KeyConfig_t * phKeyConfigs);
 static ph_Type_Chain_t * TailofStatusTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Chain_t * TailofStatusFieldChain(ph_Chain_t * phFieldChain);
 static void freeargs( char **args, int nargs );
+static int checkVerbs( struct nv_pair *nv, int line, char * noun);
 void free_chain(ph_Chain_t * chain);
 void free_filterchain(ph_FilterChain_t * chain);
 void freeStatusFieldChain(ph_Chain_t * chain);
@@ -339,7 +340,10 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			}
 		}
 #endif	// DEBUG
-		if ( nargs == 0 ) continue;
+		if ( nargs == 0 ) {
+			lineno++;
+			continue;
+		}
 		if ( nargs < 0 ) return 1;
 		if ( nargs > 4 ) {
 			audit_msg(LOG_ERR, "Error - too many arguments on line %i in config file (%s) - ignoring", lineno , buf);
@@ -347,6 +351,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			if(debug) WinFprintf(fp9, "too many arguments on line " DBGBOLDGREEN(%i) " : " DBGBOLDRED(%s) "\n", lineno, buf);
 #endif	// DEBUG
 			freeargs( args, nargs );
+			lineno++;
 			continue;
 		}
 		// determine if operators or options are specified
@@ -373,6 +378,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			if(debug) WinFprintf(fp9, DBGBOLDRED(syntax error on line %1) " in config file " DBGBOLDCYAN(%s) "\n", lineno, buf);
 #endif	// DEBUG
 			freeargs( args, nargs );
+			lineno++;
 			continue;
 		}
 		// validate the operator
@@ -389,6 +395,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized operator %s) "on line " DBGBOLDCYAN(%i) "\n", args[valOperator], lineno);
 #endif	// DEBUG
 			freeargs( args, nargs );
+			lineno++;
 			continue;
 		}
 		// validate the option
@@ -402,9 +409,22 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		if ( option == NOOPT ) {
 			audit_msg(LOG_ERR, "Error - unrecognized option (\"%s\") on line %i in config file - ignoring line", args[valOption], lineno);
 #ifdef DEBUG
-			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized option %s) "on line " DBGBOLDCYAN(%i) "\n", args[valOption], lineno);
+			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized option %s) " on line " DBGBOLDCYAN(%i) "\n", args[valOption], lineno);
 #endif	// DEBUG
 			freeargs( args, nargs );
+			lineno++;
+			continue;
+		}
+		if ( ( option == OPTEVAL || option == OPTQUOTE ) && operator == OPRREGEX ) {
+			audit_msg(LOG_ERR, "Error - illegal combination of option and operator on line %i in config file - ignoring line", lineno);
+			audit_msg(LOG_ERR, "%s option and %s operator may not me combined", nv_lookup_option ( option_arg, option ), nv_lookup_option ( operator_arg, operator ) );
+#ifdef DEBUG
+			if(debug) WinFprintf(fp9, DBGBOLDRED(illegal combination of option and operator) " on line " DBGBOLDCYAN(%i)
+					", option = " DBGBOLDGREEN(%s) ", operator = " DBGBOLDGREEN(%s) "\n", lineno
+					, nv_lookup_option( option_arg, option ), nv_lookup_option( operator_arg, operator ) );
+#endif	// DEBUG
+			freeargs( args, nargs );
+			lineno++;
 			continue;
 		}
 
@@ -571,11 +591,11 @@ static struct kw_pair *kw_lookup(const char *val)
 static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	int extra = 0;
+	char * noun = "MTA";
+	int iret;
 
-    if (nv->value == NULL || nv->value_len == 0 ) {
-    	audit_msg(LOG_ERR, "MTA value %s is missing - line %d", nv->value, line);
-    	return 1;
-    }
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
+
 	// check for a port number separator
 	if ( strpbrk(nv->value, ":") == NULL ) extra = 3;
 	config->MTA = (char *)calloc(1, nv->value_len + 1 + extra);
@@ -584,7 +604,7 @@ static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 	if ( WhitespaceSpan(config->MTA) == strlen(config->MTA) ) {
     	audit_msg(LOG_ERR, "MTA value %s is blank - line %d", nv->value, line);
-    	return 1;
+    	return 4;
     }
 	if ( extra ) strcat(config->MTA, ":25"); // add default port 25 if none specified
 
@@ -594,9 +614,10 @@ static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 static int logdir_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
+	char * noun = "logdir";
+	int iret;
+
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	config->logDir = strndup(nv->value,nv->value_len);
 #ifdef DEBUG
@@ -609,9 +630,10 @@ static int logdir_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 static int tmpdir_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
+	char * noun = "tmpdir";
+	int iret;
+
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	config->tmpDir = strndup(nv->value,nv->value_len);
 	// make sure it ends with a "/"
@@ -633,13 +655,12 @@ static int hash_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	char * str;
     char *endptr;
     long val;
+	char * noun = "hash";
+	int iret;
+
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
     str = nv->value;
-    // Handle empty string or string containing only whitespace
-    if (str == NULL || *str == '\0') {
-    	audit_msg(LOG_ERR, "hash value %s is missing - line %d", nv->value, line);
-    	return 1;
-    }
 
     // Skip leading whitespace
     while (isspace((unsigned char)*str)) {
@@ -686,10 +707,10 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	unsigned long int sum = 0;
 	ph_KeyConfig_t * tempKeyConfig;
 	ph_KeyConfig_t * KeyConfigTail;
+	char * noun = "key";
+	int iret;
 
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	SetInputMode(KEY);
 
@@ -755,9 +776,10 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 
 static int To_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
-	// if value is blank, there's nothing to do
-	if (nv->value == NULL) return 0;
-	if ( nv->value_len == 0 ) return 0;
+	char * noun = "To";
+	int iret;
+
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	SetInputMode(KEY);
 
@@ -787,10 +809,10 @@ static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *result1;
 	char *tempValue;
+	char * noun = "Subject";
+	int iret;
 
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	SetInputMode(KEY);
 
@@ -831,10 +853,10 @@ static int Subject_parser(struct nv_pair *nv, int line, ph_config_t *config)
 static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
+	char * noun = "default";
+	int iret;
 
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	SetInputMode(KEY);
 
@@ -864,12 +886,10 @@ static int filter_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
 	ph_FilterChain_t * TempFilterChain;
+	char * noun = "filter";
+	int iret;
 
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
-	if ( nv->name == NULL ) return 0;
-	if ( nv->name_len == 0 ) return 0;
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	SetInputMode(FILTER);
 
@@ -934,12 +954,10 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
 	char *tempValue;
 	ph_FormatChain_t * TempFormatChain;
+	char * noun = "format";
+	int iret;
 
-	// if value is blank, there's nothing to do
-	if ( nv->value == NULL ) return 0;
-	if ( nv->value_len == 0 ) return 0;
-	if ( nv->name == NULL ) return 0;
-	if ( nv->name_len == 0 ) return 0;
+	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	SetInputMode(FORMAT);
 
@@ -1829,6 +1847,31 @@ static void freeargs( char **args, int nargs ) {
 }
 
 
+static int checkVerbs( struct nv_pair *nv, int line, char * noun) {
+    if (nv->name == NULL || nv->name_len == 0 ) {
+    	audit_msg(LOG_ERR, "name for %s is missing - line %d ... this is a program bug", noun, line);
+    	return 1;
+    }
+    if ( strcmp (nv->name, noun) != 0 ) {
+    	audit_msg(LOG_ERR, "name == %s but moun == %s - line %d ... this is a program bug", nv->name, noun, line);
+    	return 2;
+    }
+    if ( nv->option != OPTINTERP ) {
+		audit_msg(LOG_ERR, "Error - syntax error on line %i in config file - ignoring line", line);
+		audit_msg(LOG_ERR, "%s option makes no sense on a %s command", nv_lookup_option ( option_arg, nv->option ), noun);
+		return 3;
+    }
+    if ( nv->operator != OPREQUAL ) {
+		audit_msg(LOG_ERR, "Error - syntax error on line %i in config file - ignoring line", line);
+		audit_msg(LOG_ERR, "%s operator makes no sense on a %s command", nv_lookup_option ( operator_arg, nv->operator ), noun);
+		return 4;
+    }
+    if (nv->value == NULL || nv->value_len == 0 ) {
+    	audit_msg(LOG_ERR, "%s value %s is missing - line %d", noun, nv->value, line);
+    	return 5;
+    }
+    return 0;
+}
 
 #ifdef DEBUG
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray ) {
