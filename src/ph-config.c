@@ -1162,6 +1162,40 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 			}
 		}
 		TempFieldChain->option = nv->option;
+		if ( TempFieldChain->option == OPTEVAL ) {	// if this field is to be evaluated, set TempFieldChain->intValue
+				if ( nv->name_len != 0 ) {
+					char * endptr;
+				    // Convert the string to a long integer
+				    long int val = strtol(TempFieldChain->value, &endptr, 10);
+				    if (*endptr == '\0' && endptr != TempFieldChain->value) {
+				    	TempFieldChain->intValue = val;
+				    } else {
+				    	audit_msg(LOG_ERR, "you specified the evaluate option for \"%s\" at line %d, however, the value you specify is %s "
+				    			"which does not appear to be an integer -- field ignored", nv->name , line, TempFieldChain->value);
+#ifdef DEBUG
+				    	if(debug) WinFprintf(fp9, DBGBOLDRED(unable to evaluate %s) " at line " DBGBOLDCYAN(%d) ", the value is "
+				    			DBGBOLDRED(%s) "\n", nv->name , line, TempFieldChain->value);
+#endif	// DEBUG
+				    	free(tempValue);
+				    	return 0;
+				    }
+				}
+		}
+		if ( TempFieldChain->option == OPTQUOTE ) {	// if this field is to be quoted, add quotes to TempFieldChain->value
+				if ( TempFieldChain->value != NULL ) {
+					char * tmpstr = (char *)calloc(strlen(TempFieldChain->value) + 3, 1);
+					strcpy(tmpstr, "\"");	// initial quote
+				    strcat(tmpstr,TempFieldChain->value);	// copy the string
+				    strcat(tmpstr, "\"");	// final quote
+				    free(TempFieldChain->value);
+				    TempFieldChain->value = tmpstr;
+				    tmpstr = NULL;
+#ifdef DEBUG
+				    if(debug) WinFprintf(fp9, "value for " DBGBOLDRED(%s) " at line " DBGBOLDCYAN(%d) " changed to "
+				    			DBGBOLDGREEN(%s) "\n", nv->name , line, TempFieldChain->value);
+#endif	// DEBUG
+				}
+		}
 		TempFieldChain->ParentTypeRecord = TempTypeChain; // link to the parent type record
 		// add the new field struct to the linked list for all field structs
 		if ( config->StatusFieldChainHead == NULL ) {
@@ -1539,19 +1573,19 @@ int equal_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_confi
 		audit_msg(LOG_ERR, "error processing the equal_operator for event %i", auparse_get_line_number(au));
 		return ( iret );
 	}
+
+	if(debug) WinFprintf(fp9, "comparing " DBGBOLDRED(%s) " equal to " DBGBOLDGREEN(%s)
+			" or " DBGBOLDGREEN(%s) "\n",
+			phFieldChain->value, auparse_interpret_field(au), auparse_get_field_str(au));
 #endif	// DEBUG
 
 	switch (phFieldChain->option) {
 		case OPTINTERP:
 			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) == 0 ) return 1;
 			break;
-		case OPTNOINTERP:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) == 0 ) return 1;
-			break;
 		case OPTEVAL:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) == 0 ) return 1;
-			break;
 		case OPTQUOTE:
+		case OPTNOINTERP:
 			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) == 0 ) return 1;
 			break;
 		default:
@@ -1569,19 +1603,19 @@ int notEqual_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_co
 		audit_msg(LOG_ERR, "error processing the notEqual_operator for event %i", auparse_get_line_number(au));
 		return ( iret );
 	}
+
+	if(debug) WinFprintf(fp9, "comparing " DBGBOLDRED(%s) " not equal to " DBGBOLDGREEN(%s)
+			" or " DBGBOLDGREEN(%s) "\n",
+			phFieldChain->value, auparse_interpret_field(au), auparse_get_field_str(au));
 #endif	// DEBUG
 
 	switch (phFieldChain->option) {
 		case OPTINTERP:
 			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) != 0 ) return 1;
 			break;
-		case OPTNOINTERP:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) != 0 ) return 1;
-			break;
 		case OPTEVAL:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) != 0 ) return 1;
-			break;
 		case OPTQUOTE:
+		case OPTNOINTERP:
 			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) != 0 ) return 1;
 			break;
 		default:
@@ -1592,6 +1626,7 @@ int notEqual_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_co
 }
 
 int greaterThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+	static long long int errcnt = 0;
 
 #ifdef DEBUG
 	int iret;
@@ -1599,14 +1634,19 @@ int greaterThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph
 		audit_msg(LOG_ERR, "error processing the greaterThan_operator for event %i", auparse_get_line_number(au));
 		return ( iret );
 	}
+
+	if(debug) WinFprintf(fp9, "comparing " DBGBOLDRED(%s) " < " DBGBOLDGREEN(%s)
+			" or " DBGBOLDGREEN(%s) "\n",
+			phFieldChain->value, auparse_interpret_field(au), auparse_get_field_str(au));
 #endif	// DEBUG
 
 	switch (phFieldChain->option) {
 		case OPTINTERP:
-			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) > 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) > 0 ) return 1;
 			break;
+		case OPTQUOTE:
 		case OPTNOINTERP:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) > 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) > 0 ) return 1;
 			break;
 		case OPTEVAL:
 			auparse_type_t field_type = auparse_get_field_type(au);
@@ -1618,14 +1658,29 @@ int greaterThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph
 					    // Convert the string to a long integer
 					    long int val = strtol(strval, &endptr, 10);
 					    if (*endptr == '\0' && endptr != strval) {
-					    	if ( phFieldChain->intValue > val ) return 1;
+					    	if ( val > phFieldChain->intValue ) return 1;
 					    }
 					}
 				}
+			} else {
+				if ( errcnt < 5 ) {
+					audit_msg(LOG_ERR, "error processing the > operator for the %s field "
+							"(value = %s) in event %i - this does not appear to be an integer number",
+							phFieldChain->label, auparse_get_field_str(au), auparse_get_serial(au));
+					audit_msg(LOG_ERR, "this is a problem in your %s config file", config->name);
+					audit_msg(LOG_ERR, "you apparently have an eval option (#) on your %s filter and "
+							"%s is not an integer", phFieldChain->label, phFieldChain->label);
+				}
+				if ( errcnt == 4 ) audit_msg(LOG_ERR, "Note: future processing of this error message is disabled. "
+						"Restart auditd to re-enable");
+				errcnt++;
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "the " DBGBOLDRED(%s) " field on the " DBGBOLDRED(%s)
+						" record is not " DBGBOLDGREEN(AUPARSE_TYPE_UNCLASSIFIED) "\n",
+						phFieldChain->label, phFieldChain->ParentTypeRecord->Name );
+#endif	// DEBUG
+				return ( -100 );
 			}
-			break;
-		case OPTQUOTE:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) > 0 ) return 1;
 			break;
 		default:
 			break;
@@ -1635,6 +1690,7 @@ int greaterThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph
 }
 
 int lessThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+	static long long int errcnt = 0;
 
 #ifdef DEBUG
 	int iret;
@@ -1642,14 +1698,19 @@ int lessThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_co
 		audit_msg(LOG_ERR, "error processing the lessThan_operator for event %i", auparse_get_line_number(au));
 		return ( iret );
 	}
+
+	if(debug) WinFprintf(fp9, "comparing " DBGBOLDRED(%s) " > " DBGBOLDGREEN(%s)
+			" or " DBGBOLDGREEN(%s) "\n",
+			phFieldChain->value, auparse_interpret_field(au), auparse_get_field_str(au));
 #endif	// DEBUG
 
 	switch (phFieldChain->option) {
 		case OPTINTERP:
-			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) < 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) < 0 ) return 1;
 			break;
+		case OPTQUOTE:
 		case OPTNOINTERP:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) < 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) < 0 ) return 1;
 			break;
 		case OPTEVAL:
 			auparse_type_t field_type = auparse_get_field_type(au);
@@ -1661,14 +1722,29 @@ int lessThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_co
 					    // Convert the string to a long integer
 					    long int val = strtol(strval, &endptr, 10);
 					    if (*endptr == '\0' && endptr != strval) {
-					    	if ( phFieldChain->intValue < val ) return 1;
+					    	if ( val < phFieldChain->intValue ) return 1;
 					    }
 					}
 				}
+			} else {
+				if ( errcnt < 5 ) {
+					audit_msg(LOG_ERR, "error processing the < operator for the %s field "
+							"(value = %s) in event %i - this does not appear to be an integer number",
+							phFieldChain->label, auparse_get_field_str(au), auparse_get_serial(au));
+					audit_msg(LOG_ERR, "this is a problem in your %s config file", config->name);
+					audit_msg(LOG_ERR, "you apparently have an eval option (#) on your %s filter and "
+							"%s is not an integer", phFieldChain->label, phFieldChain->label);
+				}
+				if ( errcnt == 4 ) audit_msg(LOG_ERR, "Note: future processing of this error message is disabled. "
+						"Restart auditd to re-enable");
+				errcnt++;
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "the " DBGBOLDRED(%s) " field on the " DBGBOLDRED(%s)
+						" record is not " DBGBOLDGREEN(AUPARSE_TYPE_UNCLASSIFIED) "\n",
+						phFieldChain->label, phFieldChain->ParentTypeRecord->Name );
+#endif	// DEBUG
+				return ( -100 );
 			}
-			break;
-		case OPTQUOTE:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) < 0 ) return 1;
 			break;
 		default:
 			break;
@@ -1678,6 +1754,7 @@ int lessThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_co
 }
 
 int greaterThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+	static long long int errcnt = 0;
 
 #ifdef DEBUG
 	int iret;
@@ -1685,14 +1762,19 @@ int greaterThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t 
 		audit_msg(LOG_ERR, "error processing the greaterThanEqualTo_operator for event %i", auparse_get_line_number(au));
 		return ( iret );
 	}
+
+	if(debug) WinFprintf(fp9, "comparing " DBGBOLDRED(%s) " <= " DBGBOLDGREEN(%s)
+			" or " DBGBOLDGREEN(%s) "\n",
+			phFieldChain->value, auparse_interpret_field(au), auparse_get_field_str(au));
 #endif	// DEBUG
 
 	switch (phFieldChain->option) {
 		case OPTINTERP:
-			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) >= 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) >= 0 ) return 1;
 			break;
+		case OPTQUOTE:
 		case OPTNOINTERP:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) >= 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) >= 0 ) return 1;
 			break;
 		case OPTEVAL:
 			auparse_type_t field_type = auparse_get_field_type(au);
@@ -1704,14 +1786,29 @@ int greaterThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t 
 					    // Convert the string to a long integer
 					    long int val = strtol(strval, &endptr, 10);
 					    if (*endptr == '\0' && endptr != strval) {
-					    	if ( phFieldChain->intValue >= val ) return 1;
+					    	if ( val >= phFieldChain->intValue ) return 1;
 					    }
 					}
 				}
+			} else {
+				if ( errcnt < 5 ) {
+					audit_msg(LOG_ERR, "error processing the >= operator for the %s field "
+							"(value = %s) in event %i - this does not appear to be an integer number",
+							phFieldChain->label, auparse_get_field_str(au), auparse_get_serial(au));
+					audit_msg(LOG_ERR, "this is a problem in your %s config file", config->name);
+					audit_msg(LOG_ERR, "you apparently have an eval option (#) on your %s filter and "
+							"%s is not an integer", phFieldChain->label, phFieldChain->label);
+				}
+				if ( errcnt == 4 ) audit_msg(LOG_ERR, "Note: future processing of this error message is disabled. "
+						"Restart auditd to re-enable");
+				errcnt++;
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "the " DBGBOLDRED(%s) " field on the " DBGBOLDRED(%s)
+						" record is not " DBGBOLDGREEN(AUPARSE_TYPE_UNCLASSIFIED) "\n",
+						phFieldChain->label, phFieldChain->ParentTypeRecord->Name );
+#endif	// DEBUG
+				return ( -100 );
 			}
-			break;
-		case OPTQUOTE:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) >= 0 ) return 1;
 			break;
 		default:
 			break;
@@ -1721,6 +1818,7 @@ int greaterThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t 
 }
 
 int lessThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+	static long long int errcnt = 0;
 
 #ifdef DEBUG
 	int iret;
@@ -1728,14 +1826,19 @@ int lessThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au
 		audit_msg(LOG_ERR, "error processing the lessThanEqualTo_operator for event %i", auparse_get_line_number(au));
 		return ( iret );
 	}
+
+	if(debug) WinFprintf(fp9, "comparing " DBGBOLDRED(%s) " >= " DBGBOLDGREEN(%s)
+			" or " DBGBOLDGREEN(%s) "\n",
+			phFieldChain->value, auparse_interpret_field(au), auparse_get_field_str(au));
 #endif	// DEBUG
 
 	switch (phFieldChain->option) {
 		case OPTINTERP:
-			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) <= 0 ) return 1;
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) <= 0 ) return 1;
 			break;
 		case OPTNOINTERP:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) <= 0 ) return 1;
+		case OPTQUOTE:
+			if ( strcmp(auparse_get_field_str(au), phFieldChain->value) <= 0 ) return 1;
 			break;
 		case OPTEVAL:
 			auparse_type_t field_type = auparse_get_field_type(au);
@@ -1747,14 +1850,29 @@ int lessThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au
 					    // Convert the string to a long integer
 					    long int val = strtol(strval, &endptr, 10);
 					    if (*endptr == '\0' && endptr != strval) {
-					    	if ( phFieldChain->intValue <= val ) return 1;
+					    	if ( val <= phFieldChain->intValue ) return 1;
 					    }
 					}
 				}
+			} else {
+				if ( errcnt < 5 ) {
+					audit_msg(LOG_ERR, "error processing the <= operator for the %s field "
+							"(value = %s) in event %i - this does not appear to be an integer number",
+							phFieldChain->label, auparse_get_field_str(au), auparse_get_serial(au));
+					audit_msg(LOG_ERR, "this is a problem in your %s config file", config->name);
+					audit_msg(LOG_ERR, "you apparently have an eval option (#) on your %s filter and "
+							"%s is not an integer", phFieldChain->label, phFieldChain->label);
+				}
+				if ( errcnt == 4 ) audit_msg(LOG_ERR, "Note: future processing of this error message is disabled. "
+						"Restart auditd to re-enable");
+				errcnt++;
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, "the " DBGBOLDRED(%s) " field on the " DBGBOLDRED(%s)
+						" record is not " DBGBOLDGREEN(AUPARSE_TYPE_UNCLASSIFIED) "\n",
+						phFieldChain->label, phFieldChain->ParentTypeRecord->Name );
+#endif	// DEBUG
+				return ( -100 );
 			}
-			break;
-		case OPTQUOTE:
-			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) <= 0 ) return 1;
 			break;
 		default:
 			break;
