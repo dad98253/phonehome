@@ -133,6 +133,8 @@ const char * OuputDeviceType[] = {
         "RAM"
 };
 
+extern const struct opr_pair *opr_lookup(operator_t operator);
+
 #ifndef DEAFULTCONFIGPATH
 static const char * DefaultConfigPath = "/etc/audit/phonehome.conf" ;	// protection from a bad config.h file...
 #else	// DEAFULTCONFIGPATH
@@ -577,6 +579,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 	ph_FilterChain_t * tempFilterChain;
 	ph_Type_Chain_t * tempTypeChain;
 	ph_Chain_t * TempFieldChain;
+	const struct opr_pair *opr_index;
 
 	if (cb_event_type != AUPARSE_CB_EVENT_READY) return;
 #ifdef DEBUG
@@ -717,8 +720,11 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #endif	// DEBUG
 						continue; // no match on label, check the next field
 					}
+					// find the proper operator
+					opr_index = opr_lookup(TempFieldChain->operator);
 					// check if the value matches ("*" matches everything)
-					if ( ( strcmp(TempFieldChain->value, auparse_interpret_field(au)) == 0 ) || ( strcmp(TempFieldChain->value, "*") == 0 ) ) {
+//					if ( ( strcmp(TempFieldChain->value, auparse_interpret_field(au)) == 0 ) || ( strcmp(TempFieldChain->value, "*") == 0 ) ) {
+					if ( ( opr_index->operator_eval(TempFieldChain, au, &phConfig) == 1 ) || ( strcmp(TempFieldChain->value, "*") == 0 ) ) {
 						// value matches - set the match bit in the type struct
 						if ( tempTypeChain->MatchMaskArray == NULL ) {
 #ifdef DEBUG

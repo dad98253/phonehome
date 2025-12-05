@@ -75,6 +75,7 @@ extern int parse_words(const char *buf, char ***args);
 
 static char *get_line(FILE *f, char *buf, unsigned size, int *lineno, const char *file);
 static struct kw_pair *kw_lookup(const char *val);
+const struct opr_pair *opr_lookup(operator_t operator);
 static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int logdir_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int tmpdir_parser(struct nv_pair *nv, int line, ph_config_t *config);
@@ -88,6 +89,13 @@ static int format_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int format_rule_parser(struct nv_pair *nv, int line, ph_config_t *config);
 static int sanity_check(ph_config_t *config, const char *file);
+int equal_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
+int notEqual_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
+int greaterThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
+int lessThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
+int greaterThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
+int lessThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
+int regex_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config);
 static void SetInputMode(modes newmode);
 static int kw_unsetMask();
 int nv_lookup_name ( const nv_list_t *nv, char * myname );
@@ -105,6 +113,7 @@ static ph_Type_Chain_t * TailofStatusTypeChain(ph_Type_Chain_t * phTypeChain);
 static ph_Chain_t * TailofStatusFieldChain(ph_Chain_t * phFieldChain);
 static void freeargs( char **args, int nargs );
 static int checkVerbs( struct nv_pair *nv, int line, char * noun);
+int checkOprArgs(ph_Chain_t * phFieldChain, auparse_state_t *au);
 void free_chain(ph_Chain_t * chain);
 void free_filterchain(ph_FilterChain_t * chain);
 void freeStatusFieldChain(ph_Chain_t * chain);
@@ -171,7 +180,20 @@ static const struct nv_list format_arg[] =
   { NULL,		NOOPT }
 };
 
-static const struct nv_list operator_arg[] =
+const struct opr_pair operator_eval[] =
+{
+  {"==",	OPREQUAL,				equal_operator},
+  {"=",		OPREQUAL,				equal_operator},
+  {"!=",	OPRNOTEQUAL,			notEqual_operator},
+  {">",		OPRGREATERTHAN,			greaterThan_operator},
+  {"<",		OPRLESSTHAN,			lessThan_operator},
+  {">=",	OPRGREATERTHANOREQUAL,	greaterThanEqualTo_operator},
+  {"<=",	OPRLESSTHANOREQUAL,		lessThanEqualTo_operator},
+  {":=",	OPRREGEX,				regex_operator},
+  { NULL,	NOOPT,					NULL}
+};
+
+const struct nv_list operator_arg[] =
 {
   {"==",	OPREQUAL },
   {"=",		OPREQUAL },
@@ -184,9 +206,10 @@ static const struct nv_list operator_arg[] =
   { NULL,	NOOPT }
 };
 
-static const struct nv_list option_arg[] =
+const struct nv_list option_arg[] =
 {
   {"?",		OPTINTERP },
+  {"!?",	OPTNOINTERP },
   {"#",		OPTEVAL },
   {"~",		OPTQUOTE },
   { NULL,	NOOPT }
@@ -271,7 +294,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 	char buf[160];
 //	char *tmpString;
 	char **args = NULL;
-	int i;
 
 	syslog(LOG_INFO, "loading config file");
 
@@ -331,6 +353,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		// convert line into name-value pair
 		int nargs = parse_words(buf, &args);
 #ifdef DEBUG
+		int i;
 		if(debug)  {
 			WinFprintf(fp9, "parse_words returned " DBGBOLDRED(%i) "\n", nargs);
 			if ( nargs > 0 ) {
@@ -587,6 +610,14 @@ static struct kw_pair *kw_lookup(const char *val)
 	return &keywords[i];
 }
 
+const struct opr_pair *opr_lookup(operator_t operator) {
+	int i = 0;
+	while (operator_eval[i].name != NULL) {
+		if (operator_eval[i].operator == operator) break;
+		i++;
+	}
+	return &(operator_eval[i]);
+}
 
 static int MTA_parser(struct nv_pair *nv, int line, ph_config_t *config)
 {
@@ -1112,6 +1143,25 @@ static int filter_rule_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		TempFieldChain->label = strdup(nv->name);
 		TempFieldChain->Type = auid;
 		TempFieldChain->value = tempValue;
+		TempFieldChain->operator = nv->operator;
+		if ( nv->operator == OPRREGEX ) { // compile the regex
+			TempFieldChain->regexcomp = (regex_t *)calloc(sizeof(regex_t), 1);
+			int iret = regcomp(TempFieldChain->regexcomp, TempFieldChain->value, 0);
+			if (iret) {
+				char msgbuf[100];
+				regerror(iret, TempFieldChain->regexcomp, msgbuf, sizeof(msgbuf));
+				audit_msg(LOG_ERR, "error compiling the regex for %s field on %s record for key=%s : %s",
+						TempFieldChain->label, TempTypeChain->Name, config->phKeyConfig->key  ,msgbuf);
+#ifdef DEBUG
+				if(debug) WinFprintf(fp9, DBGBOLDRED(error compiling the regex) " for field %s on %s record for key=%s : " DBGBOLDRED(%s)  "\n",
+						TempFieldChain->label, TempTypeChain->Name, config->phKeyConfig->key  ,msgbuf);
+#endif	// DEBUG
+
+				audit_msg(LOG_WARNING, "\"%s\" at line %d is an unknown audit field - we will try to match it anyway", nv->name , line);
+				TempFieldChain->operator = OPREQUAL;	// disables the regex call
+			}
+		}
+		TempFieldChain->option = nv->option;
 		TempFieldChain->ParentTypeRecord = TempTypeChain; // link to the parent type record
 		// add the new field struct to the linked list for all field structs
 		if ( config->StatusFieldChainHead == NULL ) {
@@ -1481,6 +1531,289 @@ out:
 	return 0;
 }
 
+int equal_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+
+#ifdef DEBUG
+	int iret;
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the equal_operator for event %i", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) == 0 ) return 1;
+			break;
+		case OPTNOINTERP:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) == 0 ) return 1;
+			break;
+		case OPTEVAL:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) == 0 ) return 1;
+			break;
+		case OPTQUOTE:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) == 0 ) return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+int notEqual_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+
+#ifdef DEBUG
+	int iret;
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the notEqual_operator for event %i", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) != 0 ) return 1;
+			break;
+		case OPTNOINTERP:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) != 0 ) return 1;
+			break;
+		case OPTEVAL:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) != 0 ) return 1;
+			break;
+		case OPTQUOTE:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) != 0 ) return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+int greaterThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+
+#ifdef DEBUG
+	int iret;
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the greaterThan_operator for event %i", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) > 0 ) return 1;
+			break;
+		case OPTNOINTERP:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) > 0 ) return 1;
+			break;
+		case OPTEVAL:
+			auparse_type_t field_type = auparse_get_field_type(au);
+			if (field_type == AUPARSE_TYPE_UNCLASSIFIED) {
+				const char * strval = auparse_get_field_str(au);
+				if ( strval != NULL ) {
+					if ( strlen(strval) != 0 ) {
+						char * endptr;
+					    // Convert the string to a long integer
+					    long int val = strtol(strval, &endptr, 10);
+					    if (*endptr == '\0' && endptr != strval) {
+					    	if ( phFieldChain->intValue > val ) return 1;
+					    }
+					}
+				}
+			}
+			break;
+		case OPTQUOTE:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) > 0 ) return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+int lessThan_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+
+#ifdef DEBUG
+	int iret;
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the lessThan_operator for event %i", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) < 0 ) return 1;
+			break;
+		case OPTNOINTERP:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) < 0 ) return 1;
+			break;
+		case OPTEVAL:
+			auparse_type_t field_type = auparse_get_field_type(au);
+			if (field_type == AUPARSE_TYPE_UNCLASSIFIED) {
+				const char * strval = auparse_get_field_str(au);
+				if ( strval != NULL ) {
+					if ( strlen(strval) != 0 ) {
+						char * endptr;
+					    // Convert the string to a long integer
+					    long int val = strtol(strval, &endptr, 10);
+					    if (*endptr == '\0' && endptr != strval) {
+					    	if ( phFieldChain->intValue < val ) return 1;
+					    }
+					}
+				}
+			}
+			break;
+		case OPTQUOTE:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) < 0 ) return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+int greaterThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+
+#ifdef DEBUG
+	int iret;
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the greaterThanEqualTo_operator for event %i", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) >= 0 ) return 1;
+			break;
+		case OPTNOINTERP:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) >= 0 ) return 1;
+			break;
+		case OPTEVAL:
+			auparse_type_t field_type = auparse_get_field_type(au);
+			if (field_type == AUPARSE_TYPE_UNCLASSIFIED) {
+				const char * strval = auparse_get_field_str(au);
+				if ( strval != NULL ) {
+					if ( strlen(strval) != 0 ) {
+						char * endptr;
+					    // Convert the string to a long integer
+					    long int val = strtol(strval, &endptr, 10);
+					    if (*endptr == '\0' && endptr != strval) {
+					    	if ( phFieldChain->intValue >= val ) return 1;
+					    }
+					}
+				}
+			}
+			break;
+		case OPTQUOTE:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) >= 0 ) return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+int lessThanEqualTo_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+
+#ifdef DEBUG
+	int iret;
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the lessThanEqualTo_operator for event %i", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			if ( strcmp(phFieldChain->value, auparse_interpret_field(au)) <= 0 ) return 1;
+			break;
+		case OPTNOINTERP:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) <= 0 ) return 1;
+			break;
+		case OPTEVAL:
+			auparse_type_t field_type = auparse_get_field_type(au);
+			if (field_type == AUPARSE_TYPE_UNCLASSIFIED) {
+				const char * strval = auparse_get_field_str(au);
+				if ( strval != NULL ) {
+					if ( strlen(strval) != 0 ) {
+						char * endptr;
+					    // Convert the string to a long integer
+					    long int val = strtol(strval, &endptr, 10);
+					    if (*endptr == '\0' && endptr != strval) {
+					    	if ( phFieldChain->intValue <= val ) return 1;
+					    }
+					}
+				}
+			}
+			break;
+		case OPTQUOTE:
+			if ( strcmp(phFieldChain->value, auparse_get_field_str(au)) <= 0 ) return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
+}
+
+int regex_operator(struct ph_Chain * phFieldChain, auparse_state_t *au, ph_config_t *config) {
+	int iret;
+	const char * valString = NULL;
+	char msgbuf[100];
+
+#ifdef DEBUG
+	if ( ( iret = checkOprArgs(phFieldChain, au) ) ) {
+		audit_msg(LOG_ERR, "error processing the regex_operator for event %i", auparse_get_line_number(au));
+		if(debug) WinFprintf(fp9, DBGBOLDRED(error processing the regex_operator) " for event %i\n", auparse_get_line_number(au));
+		return ( iret );
+	}
+#endif	// DEBUG
+
+	if ( phFieldChain->regexcomp == NULL ) {
+#ifdef DEBUG
+			audit_msg(LOG_ERR, "error processing the phFieldChain->regexcomp for event %i -- this is a program bug", auparse_get_line_number(au));
+			if(debug) WinFprintf(fp9, DBGBOLDRED(error processing the phFieldChain->regexcomp) " for event %i -- NULL pointer\n", auparse_get_line_number(au));
+#endif	// DEBUG
+	}
+	switch (phFieldChain->option) {
+		case OPTINTERP:
+			valString = auparse_interpret_field(au);
+			break;
+		case OPTNOINTERP:
+			valString = auparse_get_field_str(au);
+			break;
+		default:
+#ifdef DEBUG
+			audit_msg(LOG_ERR, "error processing the regex_operator for event %i -- this is a program bug", auparse_get_line_number(au));
+			if(debug) WinFprintf(fp9, DBGBOLDRED(error processing the regex_operator) " for event %i -- illegal option detected\n", auparse_get_line_number(au));
+#endif	// DEBUG
+			break;
+	}
+	    // apply regex
+	iret = regexec(phFieldChain->regexcomp, valString, 0, NULL, 0);
+	if (!iret) {
+		return 1;
+	} else if (iret == REG_NOMATCH) {
+		return 0;
+	} else {
+		regerror(iret, phFieldChain->regexcomp, msgbuf, sizeof(msgbuf));
+		audit_msg(LOG_ERR, "error processing the regex for event %i -- %s", auparse_get_line_number(au), msgbuf);
+#ifdef DEBUG
+		if(debug) WinFprintf(fp9, DBGBOLDRED(error processing the regex) " for event %i -- " DBGBOLDRED(%s)  "\n", auparse_get_line_number(au), msgbuf);
+#endif	// DEBUG
+
+	}
+
+	return 0;
+}
+
 
 void free_chain(ph_Chain_t * chain) {
 
@@ -1617,6 +1950,9 @@ void freeStatusFieldChain(ph_Chain_t * chain) {
 	chain->label = NULL;
 	if ( chain->value != NULL ) free( chain->value );
 	chain->value = NULL;
+	if ( chain->regexcomp != NULL ) regfree( chain->regexcomp );
+	free(chain->regexcomp);
+	chain->regexcomp = NULL;
 	free ( chain );
 	chain = NULL;
 
@@ -1848,14 +2184,19 @@ static void freeargs( char **args, int nargs ) {
 
 
 static int checkVerbs( struct nv_pair *nv, int line, char * noun) {
+
+#ifdef DEBUG
     if (nv->name == NULL || nv->name_len == 0 ) {
     	audit_msg(LOG_ERR, "name for %s is missing - line %d ... this is a program bug", noun, line);
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(name for %s is missing) " - line %d\n", noun, line);
     	return 1;
     }
     if ( strcmp (nv->name, noun) != 0 ) {
     	audit_msg(LOG_ERR, "name == %s but moun == %s - line %d ... this is a program bug", nv->name, noun, line);
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(name == %s but moun == %s) " - line %d\n", nv->name, noun, line);
     	return 2;
     }
+#endif	// DEBUG
     if ( nv->option != OPTINTERP ) {
 		audit_msg(LOG_ERR, "Error - syntax error on line %i in config file - ignoring line", line);
 		audit_msg(LOG_ERR, "%s option makes no sense on a %s command", nv_lookup_option ( option_arg, nv->option ), noun);
@@ -1872,6 +2213,36 @@ static int checkVerbs( struct nv_pair *nv, int line, char * noun) {
     }
     return 0;
 }
+
+
+int checkOprArgs(ph_Chain_t * phFieldChain, auparse_state_t *au) {
+
+#ifdef DEBUG
+    if (phFieldChain == NULL ) {
+    	audit_msg(LOG_ERR, "phFieldChain in checkOprArgs is NULL... this is a program bug");
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(phFieldChain in checkOprArgs is NULL) "\n");
+    	return -1;
+    }
+    if (phFieldChain->value == NULL ) {
+    	audit_msg(LOG_ERR, "phFieldChain->value in checkOprArgs is NULL... this is a program bug");
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(phFieldChain->value in checkOprArgs is NULL) "\n");
+    	return -2;
+    }
+    if (au == NULL ) {
+    	audit_msg(LOG_ERR, "au in checkOprArgs is NULL... this is a program bug");
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(au in checkOprArgs is NULL) "\n");
+    	return -3;
+    }
+    if ( auparse_get_type_name(au) == NULL ) {
+    	audit_msg(LOG_ERR, "au in checkOprArgs is not valid... this is a program bug");
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(au in checkOprArgs is not valid) "\n");
+    	return -4;
+    }
+#endif	// DEBUG
+
+    return 0;
+}
+
 
 #ifdef DEBUG
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray ) {

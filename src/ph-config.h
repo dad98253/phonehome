@@ -79,6 +79,8 @@
 #endif  // PHCONFIGMAIN
 
 #include <sys/types.h>
+#include <regex.h>
+#include <auparse.h>
 #include "libaudit.h"
 #define MAX_PLUGIN_ARGS 3
 #define PASS	1
@@ -100,7 +102,7 @@ typedef enum { DEFPASS, DEFREJECT } default_t;
 typedef enum { FILPASS, FILREJECT, FILEND } filter_t;
 typedef enum { FORINCLUDE, FORLOGS, FOREND } format_t;
 typedef enum { OPREQUAL, OPRNOTEQUAL, OPRGREATERTHAN, OPRLESSTHAN, OPRGREATERTHANOREQUAL, OPRLESSTHANOREQUAL, OPRREGEX } operator_t;
-typedef enum { OPTINTERP, OPTEVAL, OPTQUOTE } options_t;
+typedef enum { OPTINTERP, OPTNOINTERP, OPTEVAL, OPTQUOTE } options_t;
 
 typedef struct ph_config
 {
@@ -204,8 +206,10 @@ typedef struct ph_Chain
 	int			Type;
 	char *		value;
 	int			FieldID;
+	long int	intValue;
 	operator_t	operator;			// the (optional) operator (used for filters only)
 	options_t	option;				// the (optional) options (used in filters and formats)
+	regex_t *	regexcomp;			// the compiled regex expression
 	int			PassOrReject;
 	int			MatchMaskIndex;		// used in event evaluation to reference the appropriate
 								// match mask back in the type struct
@@ -249,6 +253,13 @@ typedef enum {
 	FILTER,
 	FORMAT
 } modes;
+
+typedef struct opr_pair
+{
+	char *name;
+	operator_t operator;
+	int (*operator_eval)(struct ph_Chain *, auparse_state_t *au, struct ph_config *);
+} opr_pair_t;
 
 EXTERN ph_KeyConfig_t ** phKeyConfigs INITNULL ;
 EXTERN ph_Chain_t * phFormatChain INITNULL ;
