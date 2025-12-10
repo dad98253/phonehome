@@ -148,11 +148,12 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 static int init_ph(int argc, const char *argv[]);
 ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
 ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
-extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au);
+extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride, char * ExtraText );
 extern void audit_msg(int priority, const char *fmt, ...);
 extern void NukemAll ( ph_config_t *pphConfig );
 extern int nv_lookup_name ( const nv_list_t *nv, char * myname );
 extern char * nv_lookup_option ( const nv_list_t *nv, int myoption );
+extern void reset_timer(timer_t timerid, time_t interval_sec);
 #ifdef DEBUG
 extern int debug_init();
 extern void debug_close();
@@ -164,6 +165,9 @@ extern const struct nv_list auparse_types[];
 static void dump_whole_event(auparse_state_t *au);
 static void dump_whole_record(auparse_state_t *au);
 static void dump_fields_of_record(auparse_state_t *au);
+#ifdef	TEST_TIMERS
+extern int test_timers(void);
+#endif	// TEST_TIMERS
 #endif	// DEBUG
 void restore_stdin();
 
@@ -189,6 +193,9 @@ int main(int argc, const char *argv[])
 		}
 	    WinFprintf(fp9, DBGBOLDGREEN(phonehome started) "\n");
 	}
+#ifdef	TEST_TIMERS
+	test_timers();
+#endif	// TEST_TIMERS
 #endif	// DEBUG
     // Make sure stdin is in blocking, canonical mode
     restore_stdin();
@@ -644,6 +651,28 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
 #endif	// DEBUG
+				if ( tempKeyConf->count ) {	// an event rate filter is defined for this key
+					const au_event_t *e = auparse_get_timestamp(au);
+					time_t EventTime;
+					if (e != NULL) {
+						EventTime = auparse_get_time(au);
+					} else break;
+					if ( tempKeyConf->currentCount == 0 ) {
+						tempKeyConf->countStartTime = EventTime;
+					}
+					(tempKeyConf->currentCount)++;
+					if ( difftime(EventTime, tempKeyConf->countStartTime) > tempKeyConf->interval ) {
+						if ( tempKeyConf->currentCount > tempKeyConf->count ) {	// send alert and reset count
+							if ( tempKeyConf->TimeoutMask == 0 ) sendalert(tempKeyConf, au, 2, "\r\n ====== Rate limit exceeded ======\r\n");
+							tempKeyConf->currentCount = 1;
+							tempKeyConf->countStartTime = EventTime;
+							if ( tempKeyConf->resetTime ) {
+								reset_timer(tempKeyConf->timer->timer_id, (time_t)tempKeyConf->resetTime);
+								tempKeyConf->TimeoutMask = 1;
+							}
+						}
+					}
+				}
 				break;
 			}
 		}	// note: there can be multiple keys specified for an event... we need to check all fields for keys
@@ -789,7 +818,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 					auparse_first_record(au);
 					saved_stdin = dup(STDIN_FILENO);
 					// send the email alert
-					sendalert(tempKeyConf, au);
+					sendalert(tempKeyConf, au, 1, NULL);
 					// restore the stdin descriptor
 					dup2(saved_stdin, STDIN_FILENO);
 					close(saved_stdin);
@@ -815,7 +844,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 			auparse_first_record(au);
 			saved_stdin = dup(STDIN_FILENO);
 			// send the email alert
-			sendalert(tempKeyConf, au);
+			sendalert(tempKeyConf, au, 1, NULL);
 			// restore the stdin descriptor
 			dup2(saved_stdin, STDIN_FILENO);
 			close(saved_stdin);

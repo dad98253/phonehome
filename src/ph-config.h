@@ -97,6 +97,7 @@
 #define WILDCARDID	-9998
 #define NOOPT	-9999
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
 typedef enum { DEFPASS, DEFREJECT } default_t;
 typedef enum { FILPASS, FILREJECT, FILEND } filter_t;
@@ -119,6 +120,7 @@ typedef struct ph_config
 	struct	ph_KeyConfig * statusKeyConfigHead;		// helpful link for cleanup
 	struct	ph_Type_Chain * StatusTypeChainHead;	// helpful link for cleanup
 	struct	ph_Chain * StatusFieldChainHead;		// helpful link for cleanup
+	struct	timer_list * StatusTimerListHead;		// helpful link for cleanup
 	struct	ph_FilterChain * CurrentFilterChain;	// a temporary pointer used during config input processing
 	int		phKeyConfigSize;
 	char *	LastMailTo;
@@ -135,6 +137,13 @@ typedef struct ph_KeyConfig
 	int		defaultFormat;
 	int		currentPolicy;
 	int		currentFormat;
+	unsigned long long int	count;
+	unsigned long int		interval;
+	unsigned long int		resetTime;
+	int						TimeoutMask;
+	time_t					countStartTime;
+	unsigned long long int	currentCount;
+	struct	timer_list	*	timer;
 	struct	ph_FilterChain * phFilterChain;
 	struct	ph_FormatChain * phFormatChain;		// the format chain for this filter
 	struct	ph_KeyConfig * next;
@@ -235,7 +244,10 @@ typedef struct nv_pair
 	options_t option;
 	int name_len;
 	int value_len;
-	int option_len;
+	int num_optional_args;
+	char ** optional_args;
+	int valOperator;
+	int valOption;
 } nv_pair_t;
 
 typedef struct kw_pair
@@ -260,6 +272,14 @@ typedef struct opr_pair
 	operator_t operator;
 	int (*operator_eval)(struct ph_Chain *, auparse_state_t *au, struct ph_config *);
 } opr_pair_t;
+
+typedef struct timer_list
+{
+    timer_t timer_id;
+    const char* name;
+    int	* mask;
+	struct timer_list *next;
+} timer_list_t;
 
 EXTERN ph_KeyConfig_t ** phKeyConfigs INITNULL ;
 EXTERN ph_Chain_t * phFormatChain INITNULL ;

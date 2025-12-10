@@ -90,7 +90,12 @@ extern ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * labe
 
 extern const struct nv_list auparse_types[];
 
-int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
+int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride, char * ExtraText ) {
+// fmtoverride :
+// 0 ==> no message text
+// 1 ==> default (controlled by format specified in config file
+// 2 ==> ignore format & dump full event
+// 3 ==> like 2 but add attachment tar file
 
 	const char *TarFileName = "audit.tar.gz";
 	char *attachment_path = NULL;
@@ -188,162 +193,169 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au) {
 	strcat(MyMessage,"Content-Transfer-Encoding: 7bit\r\n");
 	strcat(MyMessage,"Content-Disposition: inline\r\n");
 	strcat(MyMessage,"\r\n");
+	if ( ExtraText != NULL ) {
+		strcat(MyMessage,ExtraText);
+		strcat(MyMessage,"\r\n");
+	}
 
-	auparse_first_record(au);	// we should have to check for "no records" - (done before call to sendalert)
-	sprintf(tmpstr, "%d", auparse_get_line_number(au));
-	strcat(MyMessage, "line number, file name = ");
-	strcat(MyMessage, tmpstr);
-	strcat(MyMessage, ", ");
-	strcat(MyMessage, auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
-	strcat(MyMessage, "\r\n");
-	e = auparse_get_timestamp(au);
-	if (e != NULL) {
-		// Note that e->sec can be treated as time_t data if you want something a little more readable
-		EventTime = auparse_get_time(au);
-		timeinfo = localtime(&EventTime);
-		// Format the time into a string
-		strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", timeinfo);
-		strcat(MyMessage, "event time: ");
-		strcat(MyMessage, timestr);
-		strcat(MyMessage, ".");
-		sprintf(tmpstr, "%d", e->milli);
+	if ( fmtoverride ) {
+		auparse_first_record(au);	// we should have to check for "no records" - (done before call to sendalert)
+		sprintf(tmpstr, "%d", auparse_get_line_number(au));
+		strcat(MyMessage, "line number, file name = ");
 		strcat(MyMessage, tmpstr);
-		strcat(MyMessage, ":");
-		sprintf(tmpstr, "%ld", e->serial);
-		strcat(MyMessage, tmpstr);
-		strcat(MyMessage, " host=");
-		strcat(MyMessage, e->host ? e->host : "?");
+		strcat(MyMessage, ", ");
+		strcat(MyMessage, auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
 		strcat(MyMessage, "\r\n");
-	}
+		e = auparse_get_timestamp(au);
+		if (e != NULL) {
+			// Note that e->sec can be treated as time_t data if you want something a little more readable
+			EventTime = auparse_get_time(au);
+			timeinfo = localtime(&EventTime);
+			// Format the time into a string
+			strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", timeinfo);
+			strcat(MyMessage, "event time: ");
+			strcat(MyMessage, timestr);
+			strcat(MyMessage, ".");
+			sprintf(tmpstr, "%d", e->milli);
+			strcat(MyMessage, tmpstr);
+			strcat(MyMessage, ":");
+			sprintf(tmpstr, "%ld", e->serial);
+			strcat(MyMessage, tmpstr);
+			strcat(MyMessage, " host=");
+			strcat(MyMessage, e->host ? e->host : "?");
+			strcat(MyMessage, "\r\n");
+		}
 
-	// check if we use a custom format for the message
-	// we should be on the first record
-	// also, we do not need to look for the event key
+		// check if we use a custom format for the message
+		// we should be on the first record
+		// also, we do not need to look for the event key
 
-	matches = 0;	// initialize the format matches flag
-// key matches: check the formats for this key...
-	if ( (tempFormatChain = tempKeyConf->phFormatChain) != NULL ) {
-		// for each format in the chain, do:
-		do {
-			if ( tempFormatChain->AttachLogs ) continue; // we already checked this above
-			// rewind to the first record
-			auparse_first_record(au);
-#ifdef DEBUG
-			if(debug) WinFprintf(fp9, "found " DBGBOLDMAGENTA(%s %s) ", get first record\n", tempFormatChain->label, tempFormatChain->value);
-#endif	// DEBUG
-			// check each record to see if it is in the format's record type hash
-			// hash the key
+		matches = 0;	// initialize the format matches flag
+	// key matches: check the formats for this key...
+		if ( (tempFormatChain = tempKeyConf->phFormatChain) != NULL ) {
+			// for each format in the chain, do:
 			do {
-				type = auparse_get_type(au);
+				if ( tempFormatChain->AttachLogs ) continue; // we already checked this above
+				// rewind to the first record
+				auparse_first_record(au);
 #ifdef DEBUG
-				if(debug) WinFprintf(fp9, DBGBOLDYELLOW(record type:) " " DBGBOLDMAGENTA(%s) " (%i=%s)\n",auparse_get_type_name(au),auparse_get_type(au),nv_lookup_option(auparse_types,auparse_get_type(au)));
+				if(debug) WinFprintf(fp9, "found " DBGBOLDMAGENTA(%s %s) ", get first record\n", tempFormatChain->label, tempFormatChain->value);
 #endif	// DEBUG
-				if ( tempFormatChain->TypeHashArray == NULL ) {
-					// no TypeHashArray implies no types are formatted - no formats match
-#ifdef DEBUG
-					if(debug) WinFprintf(fp9, "there is no Type Hash Array defined for this format - " DBGBOLDRED(no fields match) "\n");
-#endif	// DEBUG
-					break;
-				}
-				i = type % tempFormatChain->TypeHashSize;
-#ifdef DEBUG
-				if(debug) WinFprintf(fp9, "this record type hashes into " DBGBOLDCYAN(%i) "\n", i);
-#endif	// DEBUG
-				tempTypeChain = tempFormatChain->TypeHashArray[i];
-				if ( ( tempTypeChain = CheckTypeChain(tempTypeChain, type) ) == NULL ) {
-#ifdef DEBUG
-					if(debug) WinFprintf(fp9, "no match found for this record type in this format - keep looking\n");
-#endif	// DEBUG
-					continue; // no match read the next record
-				}
-				// check for field matches
-				if ( tempTypeChain->FieldHashArray == NULL ) {
-#ifdef DEBUG
-					if(debug) WinFprintf(fp9, "match found but no fields specified for this record type\n");
-#endif	// DEBUG
-					matches = 1;	// suppress full event dump
-					continue; // no fields specified on this type record in our filter... it matches! - but continue checking records
-				}
-				auparse_first_field(au);
-#ifdef DEBUG
-				if(debug) WinFprintf(fp9, "get first field\n");
-#endif	// DEBUG
+				// check each record to see if it is in the format's record type hash
+				// hash the key
 				do {
+					type = auparse_get_type(au);
 #ifdef DEBUG
-					if(debug) WinFprintf(fp9, DBGBOLDCYAN(field:) " " DBGBOLDGREEN(%s) "=" DBGBOLDYELLOW(%s) " (%s)\n",auparse_get_field_name(au),auparse_get_field_str(au),auparse_interpret_field(au));
+					if(debug) WinFprintf(fp9, DBGBOLDYELLOW(record type:) " " DBGBOLDMAGENTA(%s) " (%i=%s)\n",auparse_get_type_name(au),auparse_get_type(au),nv_lookup_option(auparse_types,auparse_get_type(au)));
 #endif	// DEBUG
-					fname = auparse_get_field_name(au);
-					sum = 0;
-					for ( i = 0; i < strlen(fname); i++) {
-						sum+= (unsigned char)( *(fname+i) );
-					}
-					i = sum % tempTypeChain->FieldHashSize;
+					if ( tempFormatChain->TypeHashArray == NULL ) {
+						// no TypeHashArray implies no types are formatted - no formats match
 #ifdef DEBUG
-					if(debug) WinFprintf(fp9, "field: " DBGBOLDGREEN(%s) " hashes into " DBGBOLDCYAN(%i) "\n", fname, i);
+						if(debug) WinFprintf(fp9, "there is no Type Hash Array defined for this format - " DBGBOLDRED(no fields match) "\n");
 #endif	// DEBUG
-					// Check for collision
-					TempFieldChain = tempTypeChain->FieldHashArray[i];
-					if ( ( TempFieldChain = CheckFieldChain(TempFieldChain, fname) ) == NULL ) {
+						break;
+					}
+					i = type % tempFormatChain->TypeHashSize;
 #ifdef DEBUG
-						if(debug) WinFprintf(fp9, "no match found for this field name in our format\n");
+					if(debug) WinFprintf(fp9, "this record type hashes into " DBGBOLDCYAN(%i) "\n", i);
 #endif	// DEBUG
-						continue; // no match on label, check the next field
+					tempTypeChain = tempFormatChain->TypeHashArray[i];
+					if ( ( tempTypeChain = CheckTypeChain(tempTypeChain, type) ) == NULL ) {
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, "no match found for this record type in this format - keep looking\n");
+#endif	// DEBUG
+						continue; // no match read the next record
 					}
-					// check if the value on the format field is blank ("" implies no alias)
-					matches = 1;
-					if ( ( strcmp(TempFieldChain->value, "" ) != 0 ) && ( strcmp(TempFieldChain->value, "*") != 0 ) ) fname = TempFieldChain->value;
-					if ( InterpretValues ) {
-						fval = auparse_interpret_field(au);
-					} else {
-						fval = auparse_get_field_str(au);
+					// check for field matches
+					if ( tempTypeChain->FieldHashArray == NULL ) {
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, "match found but no fields specified for this record type\n");
+#endif	// DEBUG
+						matches = 1;	// suppress full event dump
+						continue; // no fields specified on this type record in our filter... it matches! - but continue checking records
 					}
-					if ( ( strlen(fval) + strlen(fname) ) < ( BUFLEN - strlen(MyMessage) - 10) ) {
-						strcat(MyMessage, fname);
-						strcat(MyMessage, " = ");
-						strcat(MyMessage, fval);
-						strcat(MyMessage, "\r\n");
-					} else {
-						audit_msg(LOG_ERR,"message buffer overflow on %s = %s .. using briefer aliases may help", fname, fval);
-						return EXIT_FAILURE;
-					}
+					auparse_first_field(au);
+#ifdef DEBUG
+					if(debug) WinFprintf(fp9, "get first field\n");
+#endif	// DEBUG
+					do {
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, DBGBOLDCYAN(field:) " " DBGBOLDGREEN(%s) "=" DBGBOLDYELLOW(%s) " (%s)\n",auparse_get_field_name(au),auparse_get_field_str(au),auparse_interpret_field(au));
+#endif	// DEBUG
+						fname = auparse_get_field_name(au);
+						sum = 0;
+						for ( i = 0; i < strlen(fname); i++) {
+							sum+= (unsigned char)( *(fname+i) );
+						}
+						i = sum % tempTypeChain->FieldHashSize;
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, "field: " DBGBOLDGREEN(%s) " hashes into " DBGBOLDCYAN(%i) "\n", fname, i);
+#endif	// DEBUG
+						// Check for collision
+						TempFieldChain = tempTypeChain->FieldHashArray[i];
+						if ( ( TempFieldChain = CheckFieldChain(TempFieldChain, fname) ) == NULL ) {
+#ifdef DEBUG
+							if(debug) WinFprintf(fp9, "no match found for this field name in our format\n");
+#endif	// DEBUG
+							continue; // no match on label, check the next field
+						}
+						// check if the value on the format field is blank ("" implies no alias)
+						matches = 1;
+						if ( ( strcmp(TempFieldChain->value, "" ) != 0 ) && ( strcmp(TempFieldChain->value, "*") != 0 ) ) fname = TempFieldChain->value;
+						if ( InterpretValues ) {
+							fval = auparse_interpret_field(au);
+						} else {
+							fval = auparse_get_field_str(au);
+						}
+						if ( fmtoverride == 1 ) {
+							if ( ( strlen(fval) + strlen(fname) ) < ( BUFLEN - strlen(MyMessage) - 10) ) {
+								strcat(MyMessage, fname);
+								strcat(MyMessage, " = ");
+								strcat(MyMessage, fval);
+								strcat(MyMessage, "\r\n");
+							} else {
+								audit_msg(LOG_ERR,"message buffer overflow on %s = %s .. using briefer aliases may help", fname, fval);
+								return EXIT_FAILURE;
+							}
+						}
+						if ( tempTypeChain->MatchMaskArray == NULL ) {
+#ifdef DEBUG
+							if(debug) WinFprintf(fp9, DBGBOLDRED(the MatchMaskArray is missing - this is a programming bug) "\n");
+#endif	// DEBUG
+							return EXIT_FAILURE;
+						}
+#ifdef DEBUG
+						if(debug) WinFprintf(fp9, "wrote (" DBGBOLDGREEN(%s) " = " DBGBOLDGREEN(%s) " to message\n", fname, fval);
+#endif	// DEBUG
 
-					if ( tempTypeChain->MatchMaskArray == NULL ) {
+						// check the next field
+					} while ( auparse_next_field(au) > 0 );
 #ifdef DEBUG
-						if(debug) WinFprintf(fp9, DBGBOLDRED(the MatchMaskArray is missing - this is a programming bug) "\n");
+					if(debug) WinFprintf(fp9, "get next record\n");
 #endif	// DEBUG
-						return EXIT_FAILURE;
-					}
-#ifdef DEBUG
-					if(debug) WinFprintf(fp9, "wrote (" DBGBOLDGREEN(%s) " = " DBGBOLDGREEN(%s) " to message\n", fname, fval);
-#endif	// DEBUG
-
-					// check the next field
-				} while ( auparse_next_field(au) > 0 );
-#ifdef DEBUG
-				if(debug) WinFprintf(fp9, "get next record\n");
-#endif	// DEBUG
-			} while (auparse_next_record(au) > 0 );
-		} while ( ( tempFormatChain = tempFormatChain->next ) != NULL );
-	} else {
-		FormatFullEvent = 1;	// no format chain -> dump it all...
-	}
-	if ( !matches ) FormatFullEvent = 1;	// no formats matched -> dump it all...
-		// check for if we are to include the full event report in the message
-	if ( FormatFullEvent ) {
-		auparse_first_record(au);	// make sure we are still on the first record
-		do {
-			// if we have adequate space left in the static buffer, append the audit record to the email text
-			if (strlen((char *) auparse_get_record_text(au))
-					< ( BUFLEN - strlen(MyMessage) - 10)) {
-				strcat(MyMessage, (char *) auparse_get_record_text(au));
-				strcat(MyMessage, "\r\n");
-			}
-		} while (auparse_next_record(au) > 0);
+				} while (auparse_next_record(au) > 0 );
+			} while ( ( tempFormatChain = tempFormatChain->next ) != NULL );
+		} else {
+			FormatFullEvent = 1;	// no format chain -> dump it all...
+		}
+		if ( !matches ) FormatFullEvent = 1;	// no formats matched -> dump it all...
+			// check for if we are to include the full event report in the message
+		if ( FormatFullEvent || fmtoverride > 1 ) {
+			auparse_first_record(au);	// make sure we are still on the first record
+			do {
+				// if we have adequate space left in the static buffer, append the audit record to the email text
+				if (strlen((char *) auparse_get_record_text(au))
+						< ( BUFLEN - strlen(MyMessage) - 10)) {
+					strcat(MyMessage, (char *) auparse_get_record_text(au));
+					strcat(MyMessage, "\r\n");
+				}
+			} while (auparse_next_record(au) > 0);
+		}
 	}
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
-	if ( AttachLogs ) {
+	if ( ( AttachLogs && fmtoverride ) || fmtoverride == 3 ) {
 		// 3. Create the attachment part from the base64 string
 		strcat(MyMessage, "Content-Type: application/octet-stream\r\n");
 		strcat(MyMessage, "Content-Disposition: attachment; filename=audit.tar.gz\r\n");
