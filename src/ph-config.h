@@ -81,6 +81,7 @@
 #include <sys/types.h>
 #include <regex.h>
 #include <auparse.h>
+#include <signal.h>
 #include "libaudit.h"
 #define MAX_PLUGIN_ARGS 3
 #define PASS	1
@@ -126,6 +127,7 @@ typedef struct ph_config
 	char *	LastMailTo;
 	char *	LastSubject;
 	int		LastDefault;
+	struct	rate_timer * LastDefRateFilter;
 } ph_config_t;
 
 typedef struct ph_KeyConfig
@@ -137,13 +139,8 @@ typedef struct ph_KeyConfig
 	int		defaultFormat;
 	int		currentPolicy;
 	int		currentFormat;
-	unsigned long long int	count;
-	unsigned long int		interval;
-	unsigned long int		resetTime;
-	int						TimeoutMask;
-	time_t					countStartTime;
-	unsigned long long int	currentCount;
-	struct	timer_list	*	timer;
+	struct	rate_timer * keyRateFilter;
+	struct	rate_timer * defPolRateFilter;
 	struct	ph_FilterChain * phFilterChain;
 	struct	ph_FormatChain * phFormatChain;		// the format chain for this filter
 	struct	ph_KeyConfig * next;
@@ -276,10 +273,23 @@ typedef struct opr_pair
 typedef struct timer_list
 {
     timer_t timer_id;
-    const char* name;
+    char* name;
     int	* mask;
-	struct timer_list *next;
+    volatile sig_atomic_t should_restart; // Use volatile sig_atomic_t for data accessed in handler & main thread
+    struct rate_timer *	parentRateTimerStruct;
+    struct timer_list *next;
 } timer_list_t;
+
+typedef struct rate_timer
+{
+	unsigned long long int	count;
+	unsigned long int		interval;
+	unsigned long int		resetTime;
+	int						TimeoutMask;
+	time_t					countStartTime;
+	unsigned long long int	currentCount;
+	struct	timer_list	*	timer;
+} rate_timer_t;
 
 EXTERN ph_KeyConfig_t ** phKeyConfigs INITNULL ;
 EXTERN ph_Chain_t * phFormatChain INITNULL ;

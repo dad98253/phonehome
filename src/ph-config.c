@@ -72,7 +72,7 @@ extern int WinFprintf(FILE *hf, const char * fmt,...);
 
 extern int IsValidEmail(const char *email);
 extern int parse_words(const char *buf, char ***args);
-extern int create_and_start_timer(timer_list_t *td, time_t expire_sec);
+extern int create_timer(timer_list_t *td);
 
 static char *get_line(FILE *f, char *buf, unsigned size, int *lineno, const char *file);
 static struct kw_pair *kw_lookup(const char *val);
@@ -158,7 +158,7 @@ static struct kw_pair keywords[] =
   {"To",				To_parser,				0,	1 },
   {"Subject",			Subject_parser,			0,	1 },
   {"default",			default_parser,			3,	1 },
-  {"filter",			filter_parser,			3,	1 },
+  {"filter",			filter_parser,			0,	1 },
   {"format",			format_parser,			0,	1 },
   { NULL,				NULL,					0,	0 }
 };
@@ -455,7 +455,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 		} */
 		if ( ( option == OPTEVAL || option == OPTQUOTE ) && operator == OPRREGEX ) {
 			audit_msg(LOG_ERR, "Error - illegal combination of option and operator on line %i in config file - ignoring line", lineno);
-			audit_msg(LOG_ERR, "%s option and %s operator may not me combined", nv_lookup_option ( option_arg, option ), nv_lookup_option ( operator_arg, operator ) );
+			audit_msg(LOG_ERR, "the %s option and %s operator may not me combined", nv_lookup_option ( option_arg, option ), nv_lookup_option ( operator_arg, operator ) );
 #ifdef DEBUG
 			if(debug) WinFprintf(fp9, DBGBOLDRED(illegal combination of option and operator) " on line " DBGBOLDCYAN(%i)
 					", option = " DBGBOLDGREEN(%s) ", operator = " DBGBOLDGREEN(%s) "\n", lineno
@@ -841,30 +841,55 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	tempKeyConfig->key		= strndup(nv->value,nv->value_len);
 	tempKeyConfig->MailTo	= strdup(config->LastMailTo);
 	tempKeyConfig->Subject	= strdup(config->LastSubject);
-	tempKeyConfig->defaultPolicy = -1;
+	tempKeyConfig->defaultPolicy = config->LastDefault;
+	if ( config->LastDefRateFilter != NULL ) {
+		tempKeyConfig->defPolRateFilter = (rate_timer_t *) calloc(sizeof(rate_timer_t), 1);
+		*(tempKeyConfig->defPolRateFilter) = *(config->LastDefRateFilter);	// assumes c++ struct copy construct available
+		if ( tempKeyConfig->defPolRateFilter->resetTime ) {
+			timer_list_t * timer_data = (timer_list_t *)calloc( sizeof(timer_list_t), 1);
+			char * timerName = (char *)malloc( strlen("default") + strlen(tempKeyConfig->key) + 2);
+			strcpy(timerName, "default");
+			strcat(timerName," ");
+			strcat(timerName,tempKeyConfig->key);
+			timer_data->name = timerName;
+			timer_data->mask = &(tempKeyConfig->defPolRateFilter->TimeoutMask);
+			timer_data->parentRateTimerStruct = tempKeyConfig->defPolRateFilter;
+			create_timer(timer_data);
+			if ( config->StatusTimerListHead == NULL ) {
+				config->StatusTimerListHead = timer_data;
+			} else {
+				TailofTimerChain(config->StatusTimerListHead)->next = timer_data;
+			}
+			tempKeyConfig->defPolRateFilter->timer = timer_data;
+		}
+	}
 	tempKeyConfig->currentPolicy = -1;
 	tempKeyConfig->currentFormat = -1;
-	tempKeyConfig->count		= count;
-	tempKeyConfig->currentCount	= 0;
-	memset(&(tempKeyConfig->countStartTime), 0, sizeof(time_t));
-	tempKeyConfig->interval		= interval;
-	tempKeyConfig->resetTime	= resetTime;
-	tempKeyConfig->TimeoutMask	= 0;
-	if ( resetTime ) {
-		timer_list_t * timer_data = (timer_list_t *)calloc( sizeof(timer_list_t), 1);
-		char * timerName = (char *)malloc( strlen(noun) + strlen(tempKeyConfig->key) + 2);
-		timerName = strdup(noun);
-		strcat(timerName," ");
-		strcat(timerName,tempKeyConfig->key);
-		timer_data->name = timerName;
-		timer_data->mask = &(tempKeyConfig->TimeoutMask);
-		create_and_start_timer(timer_data, interval);
-		if ( config->StatusTimerListHead == NULL ) {
-			config->StatusTimerListHead = timer_data;
-		} else {
-			TailofTimerChain(config->StatusTimerListHead)->next = timer_data;
+	if ( nv->num_optional_args ) {
+		tempKeyConfig->keyRateFilter = (rate_timer_t *) calloc(sizeof(rate_timer_t), 1);
+		tempKeyConfig->keyRateFilter->count		= count;
+		tempKeyConfig->keyRateFilter->currentCount	= 0;
+		memset(&(tempKeyConfig->keyRateFilter->countStartTime), 0, sizeof(time_t));
+		tempKeyConfig->keyRateFilter->interval		= interval;
+		tempKeyConfig->keyRateFilter->resetTime	= resetTime;
+		tempKeyConfig->keyRateFilter->TimeoutMask	= 0;
+		if ( resetTime ) {
+			timer_list_t * timer_data = (timer_list_t *)calloc( sizeof(timer_list_t), 1);
+			char * timerName = (char *)malloc( strlen(noun) + strlen(tempKeyConfig->key) + 2);
+			strcpy(timerName, noun);
+			strcat(timerName," ");
+			strcat(timerName,tempKeyConfig->key);
+			timer_data->name = timerName;
+			timer_data->mask = &(tempKeyConfig->keyRateFilter->TimeoutMask);
+			timer_data->parentRateTimerStruct = tempKeyConfig->keyRateFilter;
+			create_timer(timer_data);
+			if ( config->StatusTimerListHead == NULL ) {
+				config->StatusTimerListHead = timer_data;
+			} else {
+				TailofTimerChain(config->StatusTimerListHead)->next = timer_data;
+			}
+			tempKeyConfig->keyRateFilter->timer = timer_data;
 		}
-		tempKeyConfig->timer = timer_data;
 	}
 	// add the new key struct to the linked list for all key structs
 	if ( config->statusKeyConfigHead == NULL ) {
@@ -977,8 +1002,18 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	char *tempValue;
 	char * noun = "default";
 	int iret;
+	unsigned long long int count = 0;
+	unsigned long int interval = 1;
+	unsigned long int resetTime = 0;
 
 	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
+
+	if ( nv->num_optional_args ) {
+		if ( (iret = parseRateOptions(nv, line, &count, &interval, &resetTime) ) )  {
+			audit_msg(LOG_ERR, "Error: parsing rate and reset options for %s input on line %i in config file", noun, line);
+			return iret;
+		}
+	}
 
 	SetInputMode(KEY);
 
@@ -995,9 +1030,42 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	// set the last used default in the config struct
 	config->LastDefault = match;
 
+	if ( config->LastDefRateFilter != NULL ) free(config->LastDefRateFilter);
+	config->LastDefRateFilter = NULL;
+	if ( nv->num_optional_args ) {
+		config->LastDefRateFilter = (rate_timer_t *) calloc(sizeof(rate_timer_t), 1);
+		config->LastDefRateFilter->count		= count;
+		config->LastDefRateFilter->currentCount	= 0;
+		memset(&(config->LastDefRateFilter->countStartTime), 0, sizeof(time_t));
+		config->LastDefRateFilter->interval		= interval;
+		config->LastDefRateFilter->resetTime	= resetTime;
+		config->LastDefRateFilter->TimeoutMask	= 0;
+	}
+
 	// set it in the current phKeyConfig, too (if one exists)
 	if ( config->phKeyConfig != NULL ) {
 		config->phKeyConfig->defaultPolicy = match;
+		if ( config->LastDefRateFilter != NULL ) {
+			config->phKeyConfig->defPolRateFilter = (rate_timer_t *) calloc(sizeof(rate_timer_t), 1);
+			*(config->phKeyConfig->defPolRateFilter) = *(config->LastDefRateFilter);	// assumes c++ struct copy construct available
+			if ( resetTime ) {
+				timer_list_t * timer_data = (timer_list_t *)calloc( sizeof(timer_list_t), 1);
+				char * timerName = (char *)malloc( strlen(noun) + strlen(config->phKeyConfig->key) + 2);
+				strcpy(timerName, noun);
+				strcat(timerName," ");
+				strcat(timerName,config->phKeyConfig->key);
+				timer_data->name = timerName;
+				timer_data->mask = &(config->phKeyConfig->defPolRateFilter->TimeoutMask);
+				timer_data->parentRateTimerStruct = config->phKeyConfig->defPolRateFilter;
+				create_timer(timer_data);
+				if ( config->StatusTimerListHead == NULL ) {
+					config->StatusTimerListHead = timer_data;
+				} else {
+					TailofTimerChain(config->StatusTimerListHead)->next = timer_data;
+				}
+				config->phKeyConfig->defPolRateFilter->timer = timer_data;
+			}
+		}
 	}
 
 	return 0;
@@ -2132,14 +2200,14 @@ void free_phConfig(ph_config_t *pphConfig)
 	pphConfig->fieldhashSize = 0;
 	pphConfig->LastDefault = 0;
 	pphConfig->phKeyConfigSize = 0;
+	freeTimerListChain(pphConfig->StatusTimerListHead);
+	pphConfig->StatusTimerListHead = NULL;
 	freeStatusFieldChain(pphConfig->StatusFieldChainHead);
 	pphConfig->StatusFieldChainHead = NULL;
 	freeStatusTypeChain(pphConfig->StatusTypeChainHead);
 	pphConfig->StatusTypeChainHead = NULL;
 	freeStatusKeyChain(pphConfig->statusKeyConfigHead);
 	pphConfig->statusKeyConfigHead = NULL;
-	freeTimerListChain(pphConfig->StatusTimerListHead);
-	pphConfig->StatusTimerListHead = NULL;
 	if ( pphConfig->name != NULL ) free(pphConfig->name);
 	pphConfig->name = NULL;
 	if ( pphConfig->MTA != NULL ) free(pphConfig->MTA);
@@ -2200,6 +2268,10 @@ void freeStatusKeyChain(ph_KeyConfig_t * chain) {
 	chain->MailTo = NULL;
 	if ( chain->Subject != NULL ) free( chain->Subject );
 	chain->Subject = NULL;
+	if ( chain->keyRateFilter != NULL ) free( chain->keyRateFilter );
+	chain->keyRateFilter = NULL;
+	if ( chain->defPolRateFilter != NULL ) free( chain->defPolRateFilter );
+	chain->defPolRateFilter = NULL;
 	free_filterchain(chain->phFilterChain);
 	chain->phFilterChain = NULL;
 	free_formatchain(chain->phFormatChain);
@@ -2219,6 +2291,7 @@ void freeTimerListChain(timer_list_t * chain) {
 //	stop timer
     timer_delete(chain->timer_id);
 
+    free ( chain->name );
 	free ( chain );
 	chain = NULL;
 

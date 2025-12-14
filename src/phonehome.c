@@ -148,6 +148,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 static int init_ph(int argc, const char *argv[]);
 ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
 ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
+static int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, auparse_state_t *au , int fmtoverride, const char * message);
 extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride, char * ExtraText );
 extern void audit_msg(int priority, const char *fmt, ...);
 extern void NukemAll ( ph_config_t *pphConfig );
@@ -380,7 +381,6 @@ int main(int argc, const char *argv[])
 	NukemAll ( &phConfig );
 #ifdef DEBUG
 	debug_close();
-//	fclose(fd);
 #endif	// DEBUG
 	if ( strcmp ( myhostname, "localhost" ) != 0 ) free(myhostname);
 	return EXIT_SUCCESS;
@@ -651,27 +651,8 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
 #endif	// DEBUG
-				if ( tempKeyConf->count ) {	// an event rate filter is defined for this key
-					const au_event_t *e = auparse_get_timestamp(au);
-					time_t EventTime;
-					if (e != NULL) {
-						EventTime = auparse_get_time(au);
-					} else break;
-					if ( tempKeyConf->currentCount == 0 ) {
-						tempKeyConf->countStartTime = EventTime;
-					}
-					(tempKeyConf->currentCount)++;
-					if ( difftime(EventTime, tempKeyConf->countStartTime) > tempKeyConf->interval ) {
-						if ( tempKeyConf->currentCount > tempKeyConf->count ) {	// send alert and reset count
-							if ( tempKeyConf->TimeoutMask == 0 ) sendalert(tempKeyConf, au, 2, "\r\n ====== Rate limit exceeded ======\r\n");
-							tempKeyConf->currentCount = 1;
-							tempKeyConf->countStartTime = EventTime;
-							if ( tempKeyConf->resetTime ) {
-								reset_timer(tempKeyConf->timer->timer_id, (time_t)tempKeyConf->resetTime);
-								tempKeyConf->TimeoutMask = 1;
-							}
-						}
-					}
+				if ( tempKeyConf->keyRateFilter != NULL ) {
+					if ( processRateFilter (tempKeyConf->keyRateFilter, tempKeyConf, au , 2, "\r\n ====== Key Rate limit exceeded ======\r\n") ) break;
 				}
 				break;
 			}
@@ -772,7 +753,6 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 				if(debug) WinFprintf(fp9, "get next record\n");
 #endif	// DEBUG
 			} while (auparse_next_record(au) > 0 );
-////////////////////////////////////////////////////////////////////////////////
 			// we're done with this section of the filter chain, let's see if we matched:
 			matches = 1;
 			// check first type in filter
@@ -812,9 +792,13 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 				}
 #endif	// DEBUG
 				if ( tempFilterChain->PassOrReject == FILPASS ) {
+					if ( tempKeyConf->defPolRateFilter != NULL ) {
+						processRateFilter (tempKeyConf->defPolRateFilter, tempKeyConf, au , 2, "\r\n ====== Pass Rate limit exceeded ======\r\n");
+						if ( tempKeyConf->defPolRateFilter->TimeoutMask ) break;
+					}
 					// somewhere deep in the bowls of the estmp library they close stdin and
 					// thus destroy its file descriptor. This will cause our select call in
-					// the main program to fail. The following is a kludge to get around this.
+					// the main program to fail. The following is a kludge to get around this. ::: still necessary? I may have fixed this
 					auparse_first_record(au);
 					saved_stdin = dup(STDIN_FILENO);
 					// send the email alert
@@ -841,15 +825,22 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 		}
 #endif	// DEBUG
 		if ( ( !matches || tempFilterChain->PassOrReject == FILEND ) && tempKeyConf->defaultPolicy == DEFPASS ) {	// check if should apply default policy
-			auparse_first_record(au);
-			saved_stdin = dup(STDIN_FILENO);
-			// send the email alert
-			sendalert(tempKeyConf, au, 1, NULL);
-			// restore the stdin descriptor
-			dup2(saved_stdin, STDIN_FILENO);
-			close(saved_stdin);
-			// Now stdin should be restored
-			audit_msg(LOG_INFO, "Event # \"%li\" precipitated a phone home message", auparse_get_serial(au));
+			int maskcheck = 0;
+			if ( tempKeyConf->defPolRateFilter != NULL ) {
+				processRateFilter (tempKeyConf->defPolRateFilter, tempKeyConf, au , 2, "\r\n ====== Pass Rate limit exceeded ======\r\n");
+				maskcheck = tempKeyConf->defPolRateFilter->TimeoutMask;
+			}
+			if ( !maskcheck ) {
+				auparse_first_record(au);
+				saved_stdin = dup(STDIN_FILENO);
+				// send the email alert
+				sendalert(tempKeyConf, au, 1, NULL);
+				// restore the stdin descriptor
+				dup2(saved_stdin, STDIN_FILENO);
+				close(saved_stdin);
+				// Now stdin should be restored
+				audit_msg(LOG_INFO, "Event # \"%li\" precipitated a phone home message", auparse_get_serial(au));
+			}
 		}
 	} else {
 #ifdef DEBUG
@@ -923,4 +914,36 @@ ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label) {
 	} else {
 		return ( CheckFieldChain( phFieldChain->next , label) );
 	}
+}
+
+int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, auparse_state_t *au , int fmtoverride, const char * message) {
+	if ( RateFilter != NULL ) {
+		if ( RateFilter->count ) {	// an event rate filter is defined for this object
+			const au_event_t *e = auparse_get_timestamp(au);
+			time_t EventTime;
+			if (e != NULL) {
+				EventTime = auparse_get_time(au);
+			} else {
+				audit_msg(LOG_WARNING, "Unable to parse time stamp on event # \"%li\"", auparse_get_serial(au));
+				return (1);
+			}
+			if ( RateFilter->currentCount == 0 ) {
+				RateFilter->countStartTime = EventTime;
+			}
+			(RateFilter->currentCount)++;
+			if ( difftime(EventTime, RateFilter->countStartTime) > RateFilter->interval ) {
+				if ( RateFilter->currentCount > RateFilter->count ) {	// send alert and reset count
+					if ( RateFilter->TimeoutMask == 0 ) sendalert(tempKeyConf, au, fmtoverride, (char *)message);
+					RateFilter->currentCount = 1;
+					RateFilter->countStartTime = EventTime;
+					if ( RateFilter->resetTime ) {
+						reset_timer(RateFilter->timer->timer_id, (time_t)RateFilter->resetTime);
+						RateFilter->TimeoutMask = 1;
+						RateFilter->timer->should_restart = 0;
+					}
+				}
+			}
+		}
+	}
+	return 0;
 }
