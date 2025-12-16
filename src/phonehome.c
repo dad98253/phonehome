@@ -927,21 +927,26 @@ int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, a
 				audit_msg(LOG_WARNING, "Unable to parse time stamp on event # \"%li\"", auparse_get_serial(au));
 				return (1);
 			}
-			if ( RateFilter->currentCount == 0 ) {
-				RateFilter->countStartTime = EventTime;
-			}
-			(RateFilter->currentCount)++;
-			if ( difftime(EventTime, RateFilter->countStartTime) > RateFilter->interval ) {
-				if ( RateFilter->currentCount > RateFilter->count ) {	// send alert and reset count
-					if ( RateFilter->TimeoutMask == 0 ) sendalert(tempKeyConf, au, fmtoverride, (char *)message);
-					RateFilter->currentCount = 1;
+			if ( RateFilter->TimeoutMask == 0 ) {
+				if ( RateFilter->currentCount == 0 ) {
 					RateFilter->countStartTime = EventTime;
+				}
+				(RateFilter->currentCount)++;
+				if ( difftime(EventTime, RateFilter->countStartTime) > RateFilter->interval ) {
+					 RateFilter->currentCount = 0;
+				}
+			}
+			if ( RateFilter->currentCount > RateFilter->count ) {	// send alert and reset count
+				if ( RateFilter->TimeoutMask == 0 ) {
+					sendalert(tempKeyConf, au, fmtoverride, (char *)message);
 					if ( RateFilter->resetTime ) {
 						reset_timer(RateFilter->timer->timer_id, (time_t)RateFilter->resetTime);
 						RateFilter->TimeoutMask = 1;
 						RateFilter->timer->should_restart = 0;
 					}
 				}
+				RateFilter->currentCount = 0;
+				RateFilter->countStartTime = EventTime;
 			}
 		}
 	}
