@@ -90,12 +90,12 @@ extern ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * labe
 
 extern const struct nv_list auparse_types[];
 
-int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride, char * ExtraText ) {
+int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, rfmtoverride_t fmtoverride, char * ExtraText ) {
 // fmtoverride :
-// 0 ==> no message text
-// 1 ==> default (controlled by format specified in config file
-// 2 ==> ignore format & dump full event
-// 3 ==> like 2 but add attachment tar file
+// RFMTOFF ==> no message text
+// RFMTDEFAULT ==> default (controlled by format specified in config file
+// RFMTFULLEVENT ==> ignore format & dump full event
+// RFMTLOGFILES ==> like RFMTFULLEVENT but add attachment tar file
 
 	const char *TarFileName = "audit.tar.gz";
 	char *attachment_path = NULL;
@@ -150,7 +150,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride,
 	} else {
 		FormatFullEvent = 1;
 	}
-	if ( AttachLogs ) {
+	if ( AttachLogs || fmtoverride == RFMTLOGFILES ) {
 		// create the scratch file name
 		attachment_path = strdup(phConfig.tmpDir);
 		attachment_path = (char*)realloc(attachment_path, strlen(phConfig.tmpDir) + strlen(TarFileName) + 2 );
@@ -198,34 +198,33 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride,
 		strcat(MyMessage,"\r\n");
 	}
 
-	if ( fmtoverride ) {
-		auparse_first_record(au);	// we should have to check for "no records" - (done before call to sendalert)
-		sprintf(tmpstr, "%d", auparse_get_line_number(au));
-		strcat(MyMessage, "line number, file name = ");
+	auparse_first_record(au);	// we should have to check for "no records" - (done before call to sendalert)
+	sprintf(tmpstr, "%d", auparse_get_line_number(au));
+	strcat(MyMessage, "line number, file name = ");
+	strcat(MyMessage, tmpstr);
+	strcat(MyMessage, ", ");
+	strcat(MyMessage, auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
+	strcat(MyMessage, "\r\n");
+	e = auparse_get_timestamp(au);
+	if (e != NULL) {
+		// Note that e->sec can be treated as time_t data if you want something a little more readable
+		EventTime = auparse_get_time(au);
+		timeinfo = localtime(&EventTime);
+		// Format the time into a string
+		strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", timeinfo);
+		strcat(MyMessage, "event time: ");
+		strcat(MyMessage, timestr);
+		strcat(MyMessage, ".");
+		sprintf(tmpstr, "%d", e->milli);
 		strcat(MyMessage, tmpstr);
-		strcat(MyMessage, ", ");
-		strcat(MyMessage, auparse_get_filename(au) ? auparse_get_filename(au) : "stdin");
+		strcat(MyMessage, ":");
+		sprintf(tmpstr, "%ld", e->serial);
+		strcat(MyMessage, tmpstr);
+		strcat(MyMessage, " host=");
+		strcat(MyMessage, e->host ? e->host : "?");
 		strcat(MyMessage, "\r\n");
-		e = auparse_get_timestamp(au);
-		if (e != NULL) {
-			// Note that e->sec can be treated as time_t data if you want something a little more readable
-			EventTime = auparse_get_time(au);
-			timeinfo = localtime(&EventTime);
-			// Format the time into a string
-			strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", timeinfo);
-			strcat(MyMessage, "event time: ");
-			strcat(MyMessage, timestr);
-			strcat(MyMessage, ".");
-			sprintf(tmpstr, "%d", e->milli);
-			strcat(MyMessage, tmpstr);
-			strcat(MyMessage, ":");
-			sprintf(tmpstr, "%ld", e->serial);
-			strcat(MyMessage, tmpstr);
-			strcat(MyMessage, " host=");
-			strcat(MyMessage, e->host ? e->host : "?");
-			strcat(MyMessage, "\r\n");
-		}
-
+	}
+	if ( fmtoverride != RFMTOFF ) {
 		// check if we use a custom format for the message
 		// we should be on the first record
 		// also, we do not need to look for the event key
@@ -307,7 +306,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride,
 						} else {
 							fval = auparse_get_field_str(au);
 						}
-						if ( fmtoverride == 1 ) {
+						if ( fmtoverride == RFMTDEFAULT ) {
 							if ( ( strlen(fval) + strlen(fname) ) < ( BUFLEN - strlen(MyMessage) - 10) ) {
 								strcat(MyMessage, fname);
 								strcat(MyMessage, " = ");
@@ -340,7 +339,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride,
 		}
 		if ( !matches ) FormatFullEvent = 1;	// no formats matched -> dump it all...
 			// check for if we are to include the full event report in the message
-		if ( FormatFullEvent || fmtoverride > 1 ) {
+		if ( FormatFullEvent || fmtoverride == RFMTFULLEVENT || fmtoverride == RFMTLOGFILES ) {
 			auparse_first_record(au);	// make sure we are still on the first record
 			do {
 				// if we have adequate space left in the static buffer, append the audit record to the email text
@@ -355,7 +354,7 @@ int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride,
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage, "\r\n");
 	strcat(MyMessage,"--=-mdgBb2oZDbjIrIvgh75r\r\n");
-	if ( ( AttachLogs && fmtoverride ) || fmtoverride == 3 ) {
+	if ( ( AttachLogs && fmtoverride != RFMTOFF ) || fmtoverride == RFMTLOGFILES ) {
 		// 3. Create the attachment part from the base64 string
 		strcat(MyMessage, "Content-Type: application/octet-stream\r\n");
 		strcat(MyMessage, "Content-Disposition: attachment; filename=audit.tar.gz\r\n");

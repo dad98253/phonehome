@@ -148,8 +148,8 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 static int init_ph(int argc, const char *argv[]);
 ph_Type_Chain_t * CheckTypeChain(ph_Type_Chain_t * phTypeChain, int type);
 ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label);
-static int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, auparse_state_t *au , int fmtoverride, const char * message);
-extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, int fmtoverride, char * ExtraText );
+static int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, auparse_state_t *au , const char * message);
+extern int sendalert(ph_KeyConfig_t *tempKeyConf, auparse_state_t *au, rfmtoverride_t fmtoverride, char * ExtraText );
 extern void audit_msg(int priority, const char *fmt, ...);
 extern void NukemAll ( ph_config_t *pphConfig );
 extern int nv_lookup_name ( const nv_list_t *nv, char * myname );
@@ -652,7 +652,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 				if(debug) WinFprintf(fp9, DBGBOLDGREEN(key matches:) " " DBGBOLDRED(%s) "\n",fval);
 #endif	// DEBUG
 				if ( tempKeyConf->keyRateFilter != NULL ) {
-					if ( processRateFilter (tempKeyConf->keyRateFilter, tempKeyConf, au , 2, "\r\n ====== Key Rate limit exceeded ======\r\n") ) break;
+					if ( processRateFilter (tempKeyConf->keyRateFilter, tempKeyConf, au , "\r\n ====== Key Rate limit exceeded ======\r\n") ) break;
 				}
 				break;
 			}
@@ -793,7 +793,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 #endif	// DEBUG
 				if ( tempFilterChain->PassOrReject == FILPASS ) {
 					if ( tempKeyConf->defPolRateFilter != NULL ) {
-						processRateFilter (tempKeyConf->defPolRateFilter, tempKeyConf, au , 2, "\r\n ====== Pass Rate limit exceeded ======\r\n");
+						processRateFilter (tempKeyConf->defPolRateFilter, tempKeyConf, au , "\r\n ====== Pass Rate limit exceeded ======\r\n");
 						if ( tempKeyConf->defPolRateFilter->TimeoutMask ) break;
 					}
 					// somewhere deep in the bowls of the estmp library they close stdin and
@@ -802,7 +802,7 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 					auparse_first_record(au);
 					saved_stdin = dup(STDIN_FILENO);
 					// send the email alert
-					sendalert(tempKeyConf, au, 1, NULL);
+					sendalert(tempKeyConf, au, RFMTDEFAULT, NULL);
 					// restore the stdin descriptor
 					dup2(saved_stdin, STDIN_FILENO);
 					close(saved_stdin);
@@ -827,14 +827,14 @@ static void handle_read_event(auparse_state_t *au, auparse_cb_event_t cb_event_t
 		if ( ( !matches || tempFilterChain->PassOrReject == FILEND ) && tempKeyConf->defaultPolicy == DEFPASS ) {	// check if should apply default policy
 			int maskcheck = 0;
 			if ( tempKeyConf->defPolRateFilter != NULL ) {
-				processRateFilter (tempKeyConf->defPolRateFilter, tempKeyConf, au , 2, "\r\n ====== Pass Rate limit exceeded ======\r\n");
+				processRateFilter (tempKeyConf->defPolRateFilter, tempKeyConf, au , "\r\n ====== Pass Rate limit exceeded ======\r\n");
 				maskcheck = tempKeyConf->defPolRateFilter->TimeoutMask;
 			}
 			if ( !maskcheck ) {
 				auparse_first_record(au);
 				saved_stdin = dup(STDIN_FILENO);
 				// send the email alert
-				sendalert(tempKeyConf, au, 1, NULL);
+				sendalert(tempKeyConf, au, RFMTDEFAULT, NULL);
 				// restore the stdin descriptor
 				dup2(saved_stdin, STDIN_FILENO);
 				close(saved_stdin);
@@ -916,7 +916,7 @@ ph_Chain_t * CheckFieldChain(ph_Chain_t * phFieldChain, const char * label) {
 	}
 }
 
-int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, auparse_state_t *au , int fmtoverride, const char * message) {
+int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, auparse_state_t *au , const char * message) {
 	if ( RateFilter != NULL ) {
 		if ( RateFilter->count ) {	// an event rate filter is defined for this object
 			const au_event_t *e = auparse_get_timestamp(au);
@@ -932,21 +932,38 @@ int processRateFilter (rate_timer_t * RateFilter, ph_KeyConfig_t *tempKeyConf, a
 					RateFilter->countStartTime = EventTime;
 				}
 				(RateFilter->currentCount)++;
+#ifdef DEBUG
+				if ( debug ) WinFprintf(fp9, DBGBOLDYELLOW(rate count incremented) " to " DBGBOLDCYAN(%i) " for " DBGBOLDRED(%s) "\n", RateFilter->currentCount, tempKeyConf->key);
+#endif	// DEBUG
 				if ( difftime(EventTime, RateFilter->countStartTime) > RateFilter->interval ) {
 					 RateFilter->currentCount = 0;
+					 RateFilter->countStartTime = EventTime;
+#ifdef DEBUG
+					 if ( debug ) WinFprintf(fp9, DBGBOLDYELLOW(rate count reset) " for " DBGBOLDRED(%s) "\n", tempKeyConf->key);
+#endif	// DEBUG
 				}
 			}
 			if ( RateFilter->currentCount > RateFilter->count ) {	// send alert and reset count
 				if ( RateFilter->TimeoutMask == 0 ) {
-					sendalert(tempKeyConf, au, fmtoverride, (char *)message);
+					audit_msg(LOG_INFO, "Rate filter activated for %s", tempKeyConf->key);
+#ifdef DEBUG
+					if ( debug ) WinFprintf(fp9, DBGBOLDRED(rate filter activated) " for " DBGBOLDGREEN(%s) "\n", tempKeyConf->key);
+#endif	// DEBUG
+					sendalert(tempKeyConf, au, RateFilter->fmtoverride, (char *)message);
 					if ( RateFilter->resetTime ) {
 						reset_timer(RateFilter->timer->timer_id, (time_t)RateFilter->resetTime);
+#ifdef DEBUG
+						if ( debug ) WinFprintf(fp9, DBGBOLDGREEN(rate filter timer set) " for " DBGBOLDRED(%s) "\n", tempKeyConf->key);
+#endif	// DEBUG
 						RateFilter->TimeoutMask = 1;
 						RateFilter->timer->should_restart = 0;
 					}
 				}
 				RateFilter->currentCount = 0;
 				RateFilter->countStartTime = EventTime;
+#ifdef DEBUG
+				if ( debug ) WinFprintf(fp9, DBGBOLDYELLOW(rate count and event time reset) " for " DBGBOLDRED(%s) "\n", tempKeyConf->key);
+#endif	// DEBUG
 			}
 		}
 	}

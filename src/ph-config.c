@@ -126,7 +126,7 @@ void NukemAll ( ph_config_t *pphConfig );
 static int WhitespaceSpan(char* str);
 static long parse_time_with_suffix(const char *input_str, const char *noun, int line);
 static long long parse_count_with_suffix(const char *str, int line);
-static int parseRateOptions(struct nv_pair *nv, int line, unsigned long long int *count, unsigned long int *interval, unsigned long int *resetTime);
+static int parseRateOptions(struct nv_pair *nv, int line, unsigned long long int *count, unsigned long int *interval, unsigned long int *resetTime, rfmtoverride_t *fmtoverride);
 void DumpStructs ( char * configname, ph_config_t * Config, char * HashArrayName, ph_KeyConfig_t ** KeyHashArray );
 void DumpKeyHashArray( char * t1, char * title, ph_KeyConfig_t ** KeyHashArray, int LenArray);
 void DumpKeyConfigNext( char * t1, char * title, ph_KeyConfig_t * KeyConfig);
@@ -152,12 +152,12 @@ static struct kw_pair keywords[] =
 {
   {"MTA",				MTA_parser,				0,	1 },
   {"hash",				hash_parser,			0,	1 },
-  {"key",				key_parser,				3,	1 },
+  {"key",				key_parser,				4,	1 },
   {"logdir",			logdir_parser,			0,	1 },
   {"tmpdir",			tmpdir_parser,			0,	1 },
   {"To",				To_parser,				0,	1 },
   {"Subject",			Subject_parser,			0,	1 },
-  {"default",			default_parser,			3,	1 },
+  {"default",			default_parser,			4,	1 },
   {"filter",			filter_parser,			0,	1 },
   {"format",			format_parser,			0,	1 },
   { NULL,				NULL,					0,	0 }
@@ -221,9 +221,18 @@ const struct nv_list option_arg[] =
   { NULL,	NOOPT }
 };
 
-// The message mmode refers to where informational messages go
-//   0 - stderr, 1 - syslog, 2 - quiet. The default is quiet.
-static message_t message_mode = MSG_QUIET;
+const struct nv_list fmtovrd_arg[] =
+{
+  {"OFF",		RFMTOFF },
+  {"FORMAT",	RFMTDEFAULT },
+  {"EVENT",		RFMTFULLEVENT },
+  {"LOGS",		RFMTLOGFILES },
+  { NULL,	NOOPT }
+};
+
+
+static message_t message_mode = MSG_QUIET;	// The message mmode refers to where informational messages go
+											//   0 - stderr, 1 - syslog, 2 - quiet. The default is quiet.
 static debug_message_t debug_message = DBG_NO;
 static const char * defaultMTA = MTA_DEFAULT ;
 static const char * defaultMailTo = MAILTO_DEFAULT ;
@@ -374,15 +383,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			continue;
 		}
 		if ( nargs < 0 ) return 1;
-/*		if ( nargs > 4 ) {
-			audit_msg(LOG_ERR, "Error - too many arguments on line %i in config file (%s) - ignoring", lineno , buf);
-#ifdef DEBUG
-			if(debug) WinFprintf(fp9, "too many arguments on line " DBGBOLDGREEN(%i) " : " DBGBOLDRED(%s) "\n", lineno, buf);
-#endif	// DEBUG
-			freeargs( args, nargs );
-			lineno++;
-			continue;
-		}*/
 		// determine if operators or options are specified
 		int valIndex = 1;
 		int valOperator = 0;
@@ -398,27 +398,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 				valOption = valIndex+1;
 			}
 		}
-/*		if ( nargs >= 4 ) { // we may have both an operator and an option
-			valOperator = 1;
-			valIndex = 2;
-			valOption = 3;
-		} else if ( nargs == 3 ) { // either args[1] is an operator or args[2] is an option - can't have both
-			if ( nv_lookup_name ( operator_arg, args[1] ) != NOOPT ) {
-				valOperator = 1;
-				valIndex = 2;
-			} else if ( nv_lookup_name ( option_arg, args[2] ) != NOOPT ) {
-				valOption = 2;
-			}
-		} */ // nargs < 3 ==> neither an option or operator is specified
-/*		if ( nargs > 2 && valOperator == 0 && valOption == 0 ) {
-			audit_msg(LOG_ERR, "syntax error on line %i in config file (%s) - ignoring", lineno , buf);
-#ifdef DEBUG
-			if(debug) WinFprintf(fp9, DBGBOLDRED(syntax error on line %1) " in config file " DBGBOLDCYAN(%s) "\n", lineno, buf);
-#endif	// DEBUG
-			freeargs( args, nargs );
-			lineno++;
-			continue;
-		} */
 		// validate the operator
 		if ( valOperator == 0 ) {
 			operator = OPREQUAL;
@@ -427,15 +406,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			free ( args[valOperator] );
 			args[valOperator] = NULL;
 		}
-/*		if ( operator == NOOPT ) {		// should be iposible - we already checked this above
-			audit_msg(LOG_ERR, "Error - unrecognized operator (\"%s\") on line %i in config file - ignoring line", args[valOperator], lineno);
-#ifdef DEBUG
-			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized operator %s) "on line " DBGBOLDCYAN(%i) "\n", args[valOperator], lineno);
-#endif	// DEBUG
-			freeargs( args, nargs );
-			lineno++;
-			continue;
-		} */
 		// validate the option
 		if ( valOption == 0 ) {
 			option = OPTINTERP;
@@ -444,15 +414,6 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 			free ( args[valOption] );
 			args[valOption] = NULL;
 		}
-/*		if ( option == NOOPT ) {
-			audit_msg(LOG_ERR, "Error - unrecognized option (\"%s\") on line %i in config file - ignoring line", args[valOption], lineno);
-#ifdef DEBUG
-			if(debug) WinFprintf(fp9, DBGBOLDRED(unrecognized option %s) " on line " DBGBOLDCYAN(%i) "\n", args[valOption], lineno);
-#endif	// DEBUG
-			freeargs( args, nargs );
-			lineno++;
-			continue;
-		} */
 		if ( ( option == OPTEVAL || option == OPTQUOTE ) && operator == OPRREGEX ) {
 			audit_msg(LOG_ERR, "Error - illegal combination of option and operator on line %i in config file - ignoring line", lineno);
 			audit_msg(LOG_ERR, "the %s option and %s operator may not me combined", nv_lookup_option ( option_arg, option ), nv_lookup_option ( operator_arg, operator ) );
@@ -553,7 +514,7 @@ int load_phConfig(struct ph_config *pphConfig, char *file)
 #endif	// DEBUG
 			// Check number of options
 			if ( nv.num_optional_args > kw->max_options ) {
-				audit_msg(LOG_ERR, "Error - too many arguments on line %i in config file (%s) - ignoring", lineno , buf);
+				audit_msg(LOG_ERR, "Error - too many arguments on line %i in config file - ignoring", lineno);
 #ifdef DEBUG
 				if(debug) WinFprintf(fp9, "too many arguments on line " DBGBOLDGREEN(%i) " : " DBGBOLDRED(%s) "\n", lineno, buf);
 #endif	// DEBUG
@@ -802,11 +763,12 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	unsigned long long int count = 0;
 	unsigned long int interval = 1;
 	unsigned long int resetTime = 0;
+	rfmtoverride_t fmtoverride = RFMTDEFAULT;
 
 	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	if ( nv->num_optional_args ) {
-		if ( (iret = parseRateOptions(nv, line, &count, &interval, &resetTime) ) )  {
+		if ( (iret = parseRateOptions(nv, line, &count, &interval, &resetTime, &fmtoverride) ) )  {
 			audit_msg(LOG_ERR, "Error: parsing rate and reset options for %s input on line %i in config file", noun, line);
 			return iret;
 		}
@@ -873,6 +835,7 @@ static int key_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		tempKeyConfig->keyRateFilter->interval		= interval;
 		tempKeyConfig->keyRateFilter->resetTime	= resetTime;
 		tempKeyConfig->keyRateFilter->TimeoutMask	= 0;
+		tempKeyConfig->keyRateFilter->fmtoverride	= fmtoverride;
 		if ( resetTime ) {
 			timer_list_t * timer_data = (timer_list_t *)calloc( sizeof(timer_list_t), 1);
 			char * timerName = (char *)malloc( strlen(noun) + strlen(tempKeyConfig->key) + 2);
@@ -1005,11 +968,12 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 	unsigned long long int count = 0;
 	unsigned long int interval = 1;
 	unsigned long int resetTime = 0;
+	rfmtoverride_t fmtoverride = RFMTDEFAULT;
 
 	if ( ( iret = checkVerbs( nv, line, noun) ) ) return iret;
 
 	if ( nv->num_optional_args ) {
-		if ( (iret = parseRateOptions(nv, line, &count, &interval, &resetTime) ) )  {
+		if ( (iret = parseRateOptions(nv, line, &count, &interval, &resetTime, &fmtoverride) ) )  {
 			audit_msg(LOG_ERR, "Error: parsing rate and reset options for %s input on line %i in config file", noun, line);
 			return iret;
 		}
@@ -1040,6 +1004,7 @@ static int default_parser(struct nv_pair *nv, int line, ph_config_t *config)
 		config->LastDefRateFilter->interval		= interval;
 		config->LastDefRateFilter->resetTime	= resetTime;
 		config->LastDefRateFilter->TimeoutMask	= 0;
+		config->LastDefRateFilter->fmtoverride	= fmtoverride;
 	}
 
 	// set it in the current phKeyConfig, too (if one exists)
@@ -2506,15 +2471,24 @@ static int checkVerbs( struct nv_pair *nv, int line, char * noun) {
     if ( nv->option != OPTINTERP ) {
 		audit_msg(LOG_ERR, "Error - syntax error on line %i in config file - ignoring line", line);
 		audit_msg(LOG_ERR, "%s option makes no sense on a %s command", nv_lookup_option ( option_arg, nv->option ), noun);
+#ifdef DEBUG
+    	if ( debug ) WinFprintf(fp9, "syntax error on line " DBGBOLDRED(%i) " bad option in config file\n", line);
+#endif	// DEBUG
 		return 3;
     }
     if ( nv->operator != OPREQUAL ) {
 		audit_msg(LOG_ERR, "Error - syntax error on line %i in config file - ignoring line", line);
 		audit_msg(LOG_ERR, "%s operator makes no sense on a %s command", nv_lookup_option ( operator_arg, nv->operator ), noun);
+#ifdef DEBUG
+    	if ( debug ) WinFprintf(fp9, "syntax error on line " DBGBOLDRED(%i) " bad operator in config file\n", line);
+#endif	// DEBUG
 		return 4;
     }
     if (nv->value == NULL || nv->value_len == 0 ) {
     	audit_msg(LOG_ERR, "%s value %s is missing - line %d", noun, nv->value, line);
+#ifdef DEBUG
+    	if ( debug ) WinFprintf(fp9, "syntax error - missing value on line " DBGBOLDRED(%i) " in config file\n", line);
+#endif	// DEBUG
     	return 5;
     }
     return 0;
@@ -2561,6 +2535,14 @@ static long parse_time_with_suffix(const char *input_str, const char *noun, int 
 #endif	// DEBUG
         return -1; // Indicate error
     }
+    // 3. Enforce positive integers requirement (strtoll handles the sign initially)
+    if (value < 0) {
+    	audit_msg(LOG_ERR, "Error: the number in the time interval field on line %i in config file must be positive", line);
+#ifdef DEBUG
+    	if ( debug ) WinFprintf(fp9, DBGBOLDRED(Negative value in time interval field on line %i) "\n", line);
+#endif	// DEBUG
+        return -2;
+    }
     char suffix = tolower(*endptr); // Get the suffix and convert to lowercase
     switch (suffix) {
         case 's':
@@ -2578,7 +2560,7 @@ static long parse_time_with_suffix(const char *input_str, const char *noun, int 
 #ifdef DEBUG
         	if ( debug ) WinFprintf(fp9, DBGBOLDRED(Invalid time unit suffix '%c' found in optional %s time field on line %i) "\n", suffix, noun, line);
 #endif	// DEBUG
-            return -1; // Indicate error
+            return -3; // Indicate error
     }
 }
 
@@ -2602,7 +2584,7 @@ static long long parse_count_with_suffix(const char *str, int line) {
 #ifdef DEBUG
     	if ( debug ) WinFprintf(fp9, DBGBOLDRED(number provided is outside the range of long long on line %i) "\n", line);
 #endif	// DEBUG
-        return -1;
+        return -2;
     }
     // 3. Enforce positive integers requirement (strtoll handles the sign initially)
     if (value < 0) {
@@ -2610,7 +2592,7 @@ static long long parse_count_with_suffix(const char *str, int line) {
 #ifdef DEBUG
     	if ( debug ) WinFprintf(fp9, DBGBOLDRED(Negative value in count option field on line %i) "\n", line);
 #endif	// DEBUG
-        return -1;
+        return -3;
     }
     // 4. Check for an optional suffix
     if (*endptr != '\0') {
@@ -2632,7 +2614,7 @@ static long long parse_count_with_suffix(const char *str, int line) {
 #ifdef DEBUG
             	if ( debug ) WinFprintf(fp9, DBGBOLDRED(unknown suffix '%c' on the count number on line %i) "\n", *endptr, line);
 #endif	// DEBUG
-                return -1;
+                return -4;
         }
         // Apply multiplier and check for overflow using built-in
         if (__builtin_mul_overflow(value, multiplier, &value)) {
@@ -2640,7 +2622,7 @@ static long long parse_count_with_suffix(const char *str, int line) {
 #ifdef DEBUG
         	if ( debug ) WinFprintf(fp9, DBGBOLDRED(Value overflowed in the count number on line %i) "\n", line);
 #endif	// DEBUG
-            return -1;
+            return -5;
         }
         endptr++; // Move past the suffix
         // 5. Check that nothing follows the number AND the suffix (no trailing garbage)
@@ -2649,7 +2631,7 @@ static long long parse_count_with_suffix(const char *str, int line) {
 #ifdef DEBUG
         	if ( debug ) WinFprintf(fp9, DBGBOLDRED(Trailing characters detected in the count number on line %i) "\n", line);
 #endif	// DEBUG
-            return -1;
+            return -6;
         }
     }
 
@@ -2659,7 +2641,7 @@ static long long parse_count_with_suffix(const char *str, int line) {
 
 
 static int parseRateOptions(struct nv_pair *nv, int line, unsigned long long int *count,
-		unsigned long int *interval, unsigned long int *resetTime) {
+		unsigned long int *interval, unsigned long int *resetTime, rfmtoverride_t *fmtoverride) {
 
 	if ( nv->num_optional_args == 0 ) return 0;
 	if ( nv->optional_args == NULL ) {
@@ -2694,11 +2676,25 @@ static int parseRateOptions(struct nv_pair *nv, int line, unsigned long long int
 		return 15;
 	}
 	if ( ( *resetTime = parse_time_with_suffix(nv->optional_args[2], "reset time", line) ) < 0 ) return 16;
+	// parse optional format override
+	if ( nv->num_optional_args < 4 ) return 0;
+	if ( nv->optional_args[3] == NULL ) {
+#ifdef DEBUG
+		if ( debug ) WinFprintf(fp9, DBGBOLDRED(nv->optional_args[3] == NULL) " while parsing line %i\n", line);
+#endif	// DEBUG
+		return 17;
+	}
+	if ( nv_lookup_name ( fmtovrd_arg, nv->optional_args[3] ) == NOOPT ) {
+		audit_msg(LOG_ERR, "Error: Bad value for format override option on line %i in config file - valid value is OFF,FORMAT,EVENT,or LOGS", line);
+#ifdef DEBUG
+		if ( debug ) WinFprintf(fp9, DBGBOLDRED(invalid format override option) " while parsing line %i\n", line);
+#endif	// DEBUG
+		return 18;
+	}
+	*fmtoverride = (rfmtoverride_t)nv_lookup_name ( fmtovrd_arg, nv->optional_args[3] );
 
 	return 0;
 }
-
-
 
 
 

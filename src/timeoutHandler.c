@@ -53,7 +53,10 @@ static void timeout_handler(int sig, siginfo_t *si, void *uc) {
     }
     // un-mask the filter
     *(data->mask) = 0;
-
+	audit_msg(LOG_INFO, "Rate filter timer expired for %s", data->name);
+#ifdef DEBUG
+	if ( debug ) WinFprintf(fp9, DBGBOLDRED(rate filter timer) " " DBGBOLDGREEN(expired) " for " DBGBOLDYELLOW(%s) "\n", data->name);
+#endif	// DEBUG
 // --- Critical Logic Area ---
 
     if (data->should_restart) {

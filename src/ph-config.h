@@ -105,6 +105,7 @@ typedef enum { FILPASS, FILREJECT, FILEND } filter_t;
 typedef enum { FORINCLUDE, FORLOGS, FOREND } format_t;
 typedef enum { OPREQUAL, OPRNOTEQUAL, OPRGREATERTHAN, OPRLESSTHAN, OPRGREATERTHANOREQUAL, OPRLESSTHANOREQUAL, OPRREGEX } operator_t;
 typedef enum { OPTINTERP, OPTNOINTERP, OPTEVAL, OPTQUOTE } options_t;
+typedef enum { RFMTOFF, RFMTDEFAULT, RFMTFULLEVENT, RFMTLOGFILES } rfmtoverride_t;	// Rate Format Override settings
 
 typedef struct ph_config
 {
@@ -285,6 +286,7 @@ typedef struct rate_timer
 	unsigned long long int	count;
 	unsigned long int		interval;
 	unsigned long int		resetTime;
+	rfmtoverride_t			fmtoverride;
 	int						TimeoutMask;
 	time_t					countStartTime;
 	unsigned long long int	currentCount;
